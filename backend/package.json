@@ -1,0 +1,16 @@
+{
+  "name": "moneywise-sync-backend",
+  "private": true,
+  "version": "1.0.0",
+  "main": "index.cjs",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.cjs"
+  },
+  "dependencies": {
+    "zod": "^3.25.42"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: moneywise-sync-backend
+    runtime: docker
+    rootDir: backend
+    plan: starter
+    healthCheckPath: /health
+    disk:
+      name: moneywise-backend-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 8787
+      - key: DATABASE_PATH
+        value: /data/moneywise-sync.sqlite
+      - key: MONEYWISE_BACKEND_AUTH_MODE
+        value: hybrid
+      - key: MONEYWISE_BACKEND_SESSION_TTL_DAYS
+        value: 30
+      - key: AUTH_SECRET
+        generateValue: true

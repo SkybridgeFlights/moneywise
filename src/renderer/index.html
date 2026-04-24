@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MoneyWise</title>
+  </head>
+  <body>
+    <div id="boot-fallback" style="min-height:100vh;display:grid;place-items:center;padding:32px;background:#08111f;color:#e2e8f0;font-family:'Segoe UI',Tahoma,sans-serif;">
+      <div style="max-width:860px;width:100%;padding:24px 28px;border:1px solid rgba(148,163,184,.18);border-radius:24px;background:rgba(15,23,42,.88);box-shadow:0 24px 60px rgba(2,8,20,.35);">
+        <h1 style="margin:0 0 12px;font-size:24px;">MoneyWise startup</h1>
+        <p id="boot-phase" style="margin:0;color:#93a3bf;">Phase: bootstrap</p>
+        <pre id="boot-error" style="margin:16px 0 0;white-space:pre-wrap;word-break:break-word;color:#fca5a5;">Waiting for renderer startup...</pre>
+      </div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+  </body>
+  </html>

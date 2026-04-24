@@ -1,0 +1,77 @@
+{
+  "name": "moneywise-desktop",
+  "version": "1.0.0",
+  "description": "Professional desktop app for personal finance, budgeting, and smart money allocation.",
+  "main": "out/main/index.js",
+  "author": "OpenAI Codex",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "preview": "electron-vite preview",
+    "backend:start": "node backend/index.cjs",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "package:win": "npm.cmd run build && electron-builder --win nsis portable",
+    "package:mac": "npm.cmd run build && electron-builder --mac dmg"
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "^3.0.1",
+    "@electron-toolkit/utils": "^4.0.0",
+    "better-sqlite3": "^12.0.0",
+    "date-fns": "^4.1.0",
+    "lucide-react": "^0.511.0",
+    "papaparse": "^5.5.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "recharts": "^2.15.3",
+    "xlsx": "^0.18.5",
+    "zod": "^3.25.42"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "@types/papaparse": "^5.3.16",
+    "@types/react": "^19.1.4",
+    "@types/react-dom": "^19.1.5",
+    "@vitejs/plugin-react": "^4.5.0",
+    "electron": "^35.2.1",
+    "electron-builder": "^26.8.1",
+    "electron-vite": "^3.0.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^4.1.5"
+  },
+  "build": {
+    "appId": "com.moneywise.desktop",
+    "productName": "MoneyWise",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.finance"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
