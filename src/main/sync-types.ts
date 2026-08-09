@@ -57,9 +57,11 @@ export interface SyncManifestEntry {
 export interface DesktopSyncStateData {
   deviceId: string | null
   authToken: string | null
+  refreshToken: string | null
+  accessTokenExpiresAt: string | null
   userId: string | null
   accountEmail: string | null
-  authMode: 'dev-session' | 'password' | null
+  authMode: 'password' | null
   cursor: string | null
   bootstrapCompleted: boolean
   paused: boolean

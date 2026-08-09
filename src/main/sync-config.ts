@@ -5,8 +5,6 @@ export interface DesktopSyncConfig {
   enabled: boolean
   backendUrl: string | null
   deviceId: string | null
-  syncEmail: string | null
-  syncPassword: string | null
 }
 
 export interface DesktopSyncConfigDebug {
@@ -14,8 +12,6 @@ export interface DesktopSyncConfigDebug {
   enabledParsed: boolean
   backendUrl: string | null
   deviceId: string | null
-  syncEmail: string | null
-  hasPassword: boolean
 }
 
 function parseEnvFile(content: string): Record<string, string> {
@@ -44,7 +40,7 @@ function parseEnvFile(content: string): Record<string, string> {
 }
 
 function loadDesktopEnvFileValues(): Record<string, string> {
-  const candidates = ['.env', '.env.local', '.env.backend', '.env.backend.local', '.env.backend.example']
+  const candidates = ['.env', '.env.local', '.env.backend', '.env.backend.local']
   const merged: Record<string, string> = {}
   candidates.forEach((filename) => {
     const filePath = join(process.cwd(), filename)
@@ -74,25 +70,19 @@ export function readDesktopSyncConfigWithDebug(): { config: DesktopSyncConfig; d
   const enabledRaw = readEnvValue('MONEYWISE_SYNC_ENABLED', fileValues)
   const backendUrl = readEnvValue('MONEYWISE_SYNC_URL', fileValues)
   const deviceId = readEnvValue('MONEYWISE_SYNC_DEVICE_ID', fileValues)
-  const syncEmail = readEnvValue('MONEYWISE_SYNC_EMAIL', fileValues)
-  const syncPassword = readEnvValue('MONEYWISE_SYNC_PASSWORD', fileValues)
   const enabledParsed = (enabledRaw ?? '').trim().toLowerCase() === 'true'
 
   return {
     config: {
       enabled: enabledParsed && Boolean(backendUrl),
       backendUrl,
-      deviceId,
-      syncEmail,
-      syncPassword
+      deviceId
     },
     debug: {
       enabledRaw,
       enabledParsed,
       backendUrl,
-      deviceId,
-      syncEmail,
-      hasPassword: Boolean(syncPassword)
+      deviceId
     }
   }
 }

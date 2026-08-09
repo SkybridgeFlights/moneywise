@@ -124,17 +124,31 @@ function createConfig(): DesktopSyncConfig {
   return {
     enabled: true,
     backendUrl: 'http://127.0.0.1:8787',
-    deviceId: 'desktop-test',
-    syncEmail: 'desktop-test@example.com',
-    syncPassword: null
+    deviceId: 'desktop-test'
   }
 }
 
 function createStateStore() {
   const dir = mkdtempSync(join(tmpdir(), 'moneywise-sync-test-'))
+  const store = new DesktopSyncStateStore(join(dir, 'sync-state.json'))
+  store.write({
+    deviceId: 'desktop-test',
+    authToken: 'test-access-token',
+    refreshToken: 'test-refresh-token',
+    accessTokenExpiresAt: '2099-01-01T00:00:00.000Z',
+    userId: 'test-user',
+    accountEmail: 'desktop-test@example.com',
+    authMode: 'password',
+    cursor: null,
+    bootstrapCompleted: false,
+    paused: false,
+    lastSyncAt: null,
+    lastError: null,
+    manifest: {}
+  })
   return {
     dir,
-    store: new DesktopSyncStateStore(join(dir, 'sync-state.json'))
+    store
   }
 }
 
@@ -336,9 +350,11 @@ describe('DesktopSyncManager', () => {
     store.write({
       deviceId: 'desktop-test',
       authToken: 'token-3',
+      refreshToken: 'refresh-3',
+      accessTokenExpiresAt: '2099-01-01T00:00:00.000Z',
       userId: 'user-3',
       accountEmail: 'user-3@example.com',
-      authMode: 'dev-session',
+      authMode: 'password',
       cursor: '2026-04-01T00:00:00.000Z',
       bootstrapCompleted: true,
       paused: false,
@@ -435,9 +451,11 @@ describe('DesktopSyncManager', () => {
     store.write({
       deviceId: 'desktop-test',
       authToken: 'token-4',
+      refreshToken: 'refresh-4',
+      accessTokenExpiresAt: '2099-01-01T00:00:00.000Z',
       userId: 'user-4',
       accountEmail: 'user-4@example.com',
-      authMode: 'dev-session',
+      authMode: 'password',
       cursor: '2026-04-01T00:00:00.000Z',
       bootstrapCompleted: true,
       paused: false,
@@ -617,9 +635,11 @@ describe('DesktopSyncManager', () => {
     store.write({
       deviceId: 'desktop-test',
       authToken: 'token-legacy',
+      refreshToken: 'refresh-legacy',
+      accessTokenExpiresAt: '2099-01-01T00:00:00.000Z',
       userId: 'user-legacy',
       accountEmail: 'legacy@example.com',
-      authMode: 'dev-session',
+      authMode: 'password',
       cursor: '2026-04-01T00:00:00.000Z',
       bootstrapCompleted: true,
       paused: false,

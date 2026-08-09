@@ -14,6 +14,10 @@ function addDays(days) {
   return next.toISOString()
 }
 
+function addMinutes(minutes) {
+  return new Date(Date.now() + minutes * 60 * 1000).toISOString()
+}
+
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex')
   const derivedKey = crypto.scryptSync(password, salt, 64).toString('hex')
@@ -44,29 +48,36 @@ function sanitizeUser(user) {
 
 function createAuthService({ config, userRepository, sessionRepository }) {
   function ensureDevSessionsAllowed() {
-    if (config.authMode === 'password-only') {
-      throw new Error('Dev sessions are disabled for this backend.')
+    if (config.nodeEnv === 'production' || config.authMode === 'password-only') {
+      const error = new Error('Development sessions are disabled.')
+      error.code = 'dev_sessions_disabled'
+      throw error
     }
   }
 
   function issueSession(user, input, authMode) {
     const now = new Date().toISOString()
-      const token = crypto.randomBytes(24).toString('hex')
+      const accessToken = crypto.randomBytes(32).toString('base64url')
+      const refreshToken = crypto.randomBytes(48).toString('base64url')
       const session = sessionRepository.create({
         id: createId('session'),
         userId: user.id,
-        tokenHash: sha256(token, config.authSecret),
+        tokenHash: sha256(accessToken, config.authSecret),
       label: input.label ?? `${input.deviceId} ${authMode} session`,
       authMode,
       createdAt: now,
-      expiresAt: addDays(config.sessionTtlDays),
+      expiresAt: addMinutes(config.accessTokenTtlMinutes),
+      refreshTokenHash: sha256(refreshToken, config.authSecret),
+      refreshExpiresAt: addDays(config.sessionTtlDays),
       lastSeenAt: now,
       revokedAt: null
     })
 
     return {
       authMode,
-      token,
+      accessToken,
+      refreshToken,
+      tokenType: 'Bearer',
       user: sanitizeUser(user),
       session: {
         id: session.id,
@@ -152,6 +163,23 @@ function createAuthService({ config, userRepository, sessionRepository }) {
         return null
       }
       return { user: sanitizeUser(user), session }
+    },
+    refreshSession(input) {
+      const refreshTokenHash = sha256(input.refreshToken, config.authSecret)
+      const existing = sessionRepository.findByRefreshTokenHash(refreshTokenHash)
+      if (!existing || existing.revokedAt || !existing.refreshExpiresAt || new Date(existing.refreshExpiresAt).getTime() <= Date.now()) {
+        const error = new Error('Invalid or expired refresh token.')
+        error.code = 'invalid_credentials'
+        throw error
+      }
+      const user = userRepository.findById(existing.userId)
+      if (!user || user.status !== 'active') {
+        const error = new Error('Invalid or expired refresh token.')
+        error.code = 'invalid_credentials'
+        throw error
+      }
+      sessionRepository.revoke(existing.id, new Date().toISOString())
+      return issueSession(user, { deviceId: input.deviceId, label: existing.label }, existing.authMode)
     },
     logout(sessionId) {
       sessionRepository.revoke(sessionId, new Date().toISOString())

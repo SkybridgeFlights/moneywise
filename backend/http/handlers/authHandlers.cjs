@@ -1,4 +1,4 @@
-const { passwordAuthSchema, userSessionSchema } = require('../../domain/schemas.cjs')
+const { passwordAuthSchema, userSessionSchema, refreshSessionSchema } = require('../../domain/schemas.cjs')
 
 function createAuthHandlers({ authService, sendJson }) {
   function mapAuthError(error, response) {
@@ -9,6 +9,10 @@ function createAuthHandlers({ authService, sendJson }) {
       }
       if (error.code === 'invalid_credentials') {
         sendJson(response, 401, { error: error.message })
+        return true
+      }
+      if (error.code === 'dev_sessions_disabled') {
+        sendJson(response, 403, { error: error.message })
         return true
       }
     }
@@ -49,6 +53,15 @@ function createAuthHandlers({ authService, sendJson }) {
         if (mapAuthError(error, response)) {
           return
         }
+        throw error
+      }
+    },
+    async refresh(request, response, body) {
+      try {
+        const parsed = refreshSessionSchema.parse(body)
+        sendJson(response, 200, authService.refreshSession(parsed))
+      } catch (error) {
+        if (mapAuthError(error, response)) return
         throw error
       }
     },

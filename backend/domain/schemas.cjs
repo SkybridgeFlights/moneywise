@@ -15,6 +15,11 @@ const passwordAuthSchema = sessionBaseSchema.extend({
   password: z.string().min(8).max(200)
 })
 
+const refreshSessionSchema = z.object({
+  refreshToken: z.string().min(32).max(500),
+  deviceId: z.string().min(1).max(120)
+})
+
 const syncRecordSchema = z.object({
   entityType: entityTypeSchema,
   recordId: z.string().min(1).max(120),
@@ -33,6 +38,7 @@ const syncPushSchema = z.object({
 module.exports = {
   userSessionSchema,
   passwordAuthSchema,
+  refreshSessionSchema,
   syncRecordSchema,
   syncPushSchema,
   entityTypeSchema

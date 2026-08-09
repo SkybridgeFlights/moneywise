@@ -47,7 +47,8 @@ export interface SyncStatusSnapshot {
   deviceId: string | null
   userId: string | null
   accountEmail: string | null
-  authMode: 'dev-session' | 'password' | null
+  authMode: 'password' | null
+  authenticated: boolean
   backendReachable: boolean
   bootstrapCompleted: boolean
   pendingChanges: number
@@ -62,6 +63,9 @@ export interface MoneywiseApi {
   syncNow(): Promise<SyncStatusSnapshot>
   setSyncPaused(paused: boolean): Promise<SyncStatusSnapshot>
   uploadAllLocalData(): Promise<SyncStatusSnapshot>
+  login(email: string, password: string): Promise<SyncStatusSnapshot>
+  register(email: string, password: string): Promise<SyncStatusSnapshot>
+  logout(): Promise<SyncStatusSnapshot>
   saveIncome(input: SaveIncomeInput): Promise<AppSnapshot>
   deleteIncome(id: string): Promise<AppSnapshot>
   saveExpense(input: SaveExpenseInput): Promise<AppSnapshot>

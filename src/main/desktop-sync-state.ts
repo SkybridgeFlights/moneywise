@@ -6,6 +6,8 @@ import type { DesktopSyncStateData, SyncManifestEntry } from './sync-types'
 const EMPTY_STATE: DesktopSyncStateData = {
   deviceId: null,
   authToken: null,
+  refreshToken: null,
+  accessTokenExpiresAt: null,
   userId: null,
   accountEmail: null,
   authMode: null,
@@ -42,9 +44,11 @@ function normalizeState(value: unknown): DesktopSyncStateData {
   return {
     deviceId: typeof raw.deviceId === 'string' && raw.deviceId ? raw.deviceId : null,
     authToken: typeof raw.authToken === 'string' && raw.authToken ? raw.authToken : null,
+    refreshToken: typeof raw.refreshToken === 'string' && raw.refreshToken ? raw.refreshToken : null,
+    accessTokenExpiresAt: typeof raw.accessTokenExpiresAt === 'string' && raw.accessTokenExpiresAt ? raw.accessTokenExpiresAt : null,
     userId: typeof raw.userId === 'string' && raw.userId ? raw.userId : null,
     accountEmail: typeof raw.accountEmail === 'string' && raw.accountEmail ? raw.accountEmail : null,
-    authMode: raw.authMode === 'dev-session' || raw.authMode === 'password' ? raw.authMode : null,
+    authMode: raw.authMode === 'password' ? raw.authMode : null,
     cursor: typeof raw.cursor === 'string' && raw.cursor ? raw.cursor : null,
     bootstrapCompleted: raw.bootstrapCompleted === true,
     paused: raw.paused === true,

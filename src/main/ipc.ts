@@ -20,6 +20,7 @@ import {
   deleteCategoryInputSchema,
   exportFormatSchema,
   booleanSchema,
+  authCredentialsSchema,
   expenseInputSchema,
   goalContributionInputSchema,
   goalInputSchema,
@@ -94,6 +95,12 @@ export function registerIpcHandlers(service: FinanceService, syncManager: Deskto
     return syncManager.uploadAllLocalData()
   })
   registerValidatedHandler('sync:setPaused', booleanSchema, (paused: boolean) => syncManager.setPaused(paused))
+  registerValidatedHandler('auth:login', authCredentialsSchema, ({ email, password }) => syncManager.login(email, password))
+  registerValidatedHandler('auth:register', authCredentialsSchema, ({ email, password }) => syncManager.register(email, password))
+  ipcMain.handle('auth:logout', (event) => {
+    ensureTrustedSender(event)
+    return syncManager.logout()
+  })
   registerValidatedHandler('income:save', incomeInputSchema, (input: SaveIncomeInput) => service.saveIncome(input))
   registerValidatedHandler('income:delete', idSchema, (id: string) => service.deleteIncome(id))
   registerValidatedHandler('expense:save', expenseInputSchema, (input: SaveExpenseInput) => service.saveExpense(input))

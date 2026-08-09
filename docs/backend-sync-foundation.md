@@ -42,7 +42,11 @@ The backend will also import legacy JSON backend data one time if the SQLite dat
 
 Supported auth flows:
 
-- `POST /api/auth/dev-session`
+- `POST /api/auth/dev-session` (development only; always rejected in production)
+- `POST /api/auth/register`
+- `POST /api/auth/login`
+- `POST /api/auth/refresh`
+- `POST /api/auth/logout`
   - kept for practical local testing and development
 - `POST /api/auth/register`
   - email + password account creation

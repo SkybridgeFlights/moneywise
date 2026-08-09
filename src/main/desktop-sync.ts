@@ -22,11 +22,13 @@ import {
 
 type Logger = (message: string, detail?: unknown) => void
 
-interface DevSessionResponse {
-  token: string
+interface SessionResponse {
+  accessToken: string
+  refreshToken: string
+  accessTokenExpiresAt: string
   userId: string
   email: string
-  authMode: 'dev-session' | 'password'
+  authMode: 'password'
 }
 
 interface PushAppliedRecord {
@@ -153,19 +155,24 @@ function parseChangesPayload(value: unknown): RemoteChangesPayload {
   }
 }
 
-function parseDevSessionResponse(value: unknown): DevSessionResponse | null {
+function parseSessionResponse(value: unknown): SessionResponse | null {
   if (
     !isRecordObject(value) ||
-    typeof value.token !== 'string' ||
+    typeof value.accessToken !== 'string' ||
+    typeof value.refreshToken !== 'string' ||
+    !isRecordObject(value.session) ||
+    typeof value.session.expiresAt !== 'string' ||
     !isRecordObject(value.user) ||
     typeof value.user.id !== 'string' ||
     typeof value.user.email !== 'string' ||
-    (value.authMode !== 'dev-session' && value.authMode !== 'password')
+    value.authMode !== 'password'
   ) {
     return null
   }
   return {
-    token: value.token,
+    accessToken: value.accessToken,
+    refreshToken: value.refreshToken,
+    accessTokenExpiresAt: value.session.expiresAt,
     userId: value.user.id,
     email: value.user.email,
     authMode: value.authMode
@@ -294,6 +301,7 @@ export class DesktopSyncManager {
       userId: persisted.userId,
       accountEmail: persisted.accountEmail,
       authMode: persisted.authMode,
+      authenticated: Boolean(persisted.authToken && persisted.userId),
       backendReachable: effectiveEnabled ? this.backendReachable : false,
       bootstrapCompleted: persisted.bootstrapCompleted,
       pendingChanges,
@@ -333,6 +341,41 @@ export class DesktopSyncManager {
       await this.activeSync.catch(() => undefined)
     }
     await this.runSync('manual')
+    return this.getStatus()
+  }
+
+  async login(email: string, password: string): Promise<SyncStatusSnapshot> {
+    return this.authenticate('/api/auth/login', email, password)
+  }
+
+  async register(email: string, password: string): Promise<SyncStatusSnapshot> {
+    return this.authenticate('/api/auth/register', email, password)
+  }
+
+  async logout(): Promise<SyncStatusSnapshot> {
+    const current = this.stateStore.read()
+    if (current.authToken) {
+      try {
+        await this.requestJson('/api/auth/logout', { method: 'POST' }, current.authToken)
+      } catch {
+        // Local logout must succeed even if the backend is offline.
+      }
+    }
+    this.stateStore.write({
+      ...current,
+      authToken: null,
+      refreshToken: null,
+      accessTokenExpiresAt: null,
+      userId: null,
+      accountEmail: null,
+      authMode: null,
+      cursor: null,
+      bootstrapCompleted: false,
+      lastSyncAt: null,
+      lastError: null,
+      manifest: {}
+    })
+    this.phase = this.config.enabled ? 'idle' : 'disabled'
     return this.getStatus()
   }
 
@@ -495,22 +538,17 @@ export class DesktopSyncManager {
 
   private async ensureSession(deviceId: string): Promise<DesktopSyncStateData> {
     const current = this.stateStore.read()
-    if (current.authToken && current.userId) {
+    if (current.authToken && current.userId && current.accessTokenExpiresAt && new Date(current.accessTokenExpiresAt).getTime() > Date.now() + 30_000) {
       return current
     }
-
-    const email = this.config.syncEmail?.trim() || `${deviceId}@moneywise.local`
-    const response = this.config.syncPassword
-      ? await this.createPasswordSession(email, this.config.syncPassword, deviceId)
-      : await this.requestJson('/api/auth/dev-session', {
-          method: 'POST',
-          body: JSON.stringify({
-            email,
-            deviceId,
-            label: 'MoneyWise desktop sync'
-          })
-        })
-    const parsed = parseDevSessionResponse(response)
+    if (!current.refreshToken || !current.userId) {
+      throw new Error('Sign in is required before synchronization.')
+    }
+    const response = await this.requestJson('/api/auth/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken: current.refreshToken, deviceId })
+    })
+    const parsed = parseSessionResponse(response)
     if (!parsed) {
       throw new Error('Sync backend returned an invalid session response.')
     }
@@ -518,7 +556,9 @@ export class DesktopSyncManager {
     return this.stateStore.update((state) => ({
       ...state,
       deviceId,
-      authToken: parsed.token,
+      authToken: parsed.accessToken,
+      refreshToken: parsed.refreshToken,
+      accessTokenExpiresAt: parsed.accessTokenExpiresAt,
       userId: parsed.userId,
       accountEmail: parsed.email,
       authMode: parsed.authMode,
@@ -526,31 +566,32 @@ export class DesktopSyncManager {
     }))
   }
 
-  private async createPasswordSession(email: string, password: string, deviceId: string): Promise<unknown> {
-    try {
-      return await this.requestJson('/api/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({
-          email,
-          password,
-          deviceId,
-          label: 'MoneyWise desktop sync'
-        })
-      })
-    } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes('[401]')) {
-        throw error
-      }
-      return this.requestJson('/api/auth/register', {
-        method: 'POST',
-        body: JSON.stringify({
-          email,
-          password,
-          deviceId,
-          label: 'MoneyWise desktop sync'
-        })
-      })
-    }
+  private async authenticate(path: '/api/auth/login' | '/api/auth/register', email: string, password: string): Promise<SyncStatusSnapshot> {
+    if (!this.config.enabled || !this.config.backendUrl) throw new Error('Sync backend is not configured.')
+    const deviceId = this.stateStore.getOrCreateDeviceId(this.config.deviceId)
+    const response = await this.requestJson(path, {
+      method: 'POST',
+      body: JSON.stringify({ email, password, deviceId, label: 'MoneyWise desktop sync' })
+    })
+    const parsed = parseSessionResponse(response)
+    if (!parsed) throw new Error('Sync backend returned an invalid session response.')
+    const current = this.stateStore.read()
+    this.stateStore.write({
+      ...current,
+      authToken: parsed.accessToken,
+      refreshToken: parsed.refreshToken,
+      accessTokenExpiresAt: parsed.accessTokenExpiresAt,
+      userId: parsed.userId,
+      accountEmail: parsed.email,
+      authMode: 'password',
+      cursor: null,
+      bootstrapCompleted: false,
+      lastSyncAt: null,
+      lastError: null,
+      manifest: {}
+    })
+    this.phase = 'idle'
+    return this.getStatus()
   }
 
   private async bootstrap(syncState: DesktopSyncStateData): Promise<DesktopSyncStateData> {

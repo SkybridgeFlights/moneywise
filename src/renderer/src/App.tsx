@@ -1132,6 +1132,8 @@ export function App() {
   const [resetDialogOpen, setResetDialogOpen] = useState(false)
   const [fullUploadDialogOpen, setFullUploadDialogOpen] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatusSnapshot | null>(null)
+  const [authEmail, setAuthEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
   const [helpDialog, setHelpDialog] = useState<{ title: string; body: string } | null>(null)
   const [balanceAdjustmentValue, setBalanceAdjustmentValue] = useState('')
   const [balanceAdjustmentNote, setBalanceAdjustmentNote] = useState('')
@@ -1428,6 +1430,37 @@ export function App() {
     } catch (error) {
       const nextError = error instanceof Error ? error : new Error(String(error))
       setActionError(nextError.message || text.common.genericError)
+    }
+  }
+
+  const authenticateSync = async (mode: 'login' | 'register'): Promise<void> => {
+    if (!bridge || !authEmail.trim() || authPassword.length < 8) return
+    setBusyLabel(mode === 'login' ? 'Signing in' : 'Creating account')
+    setActionError('')
+    try {
+      const next = mode === 'login'
+        ? await bridge.login(authEmail.trim(), authPassword)
+        : await bridge.register(authEmail.trim(), authPassword)
+      setAuthPassword('')
+      setSyncStatus(next)
+      setStatusMessage(mode === 'login' ? 'Signed in' : 'Account created')
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusyLabel('')
+    }
+  }
+
+  const logoutSync = async (): Promise<void> => {
+    if (!bridge) return
+    setBusyLabel('Signing out')
+    try {
+      setSyncStatus(await bridge.logout())
+      setAuthEmail('')
+      setAuthPassword('')
+      setStatusMessage('Signed out')
+    } finally {
+      setBusyLabel('')
     }
   }
 
@@ -2325,6 +2358,16 @@ export function App() {
           subtitle={text.settings.syncSubtitle}
           action={syncStatus ? <Badge label={syncConnectionLabel} color={syncStatus.backendReachable ? '#10b981' : '#f59e0b'} /> : undefined}
         >
+          {syncStatus?.enabled && !syncStatus.authenticated ? (
+            <div className="form-grid compact">
+              <InputField label="Account email" type="email" value={authEmail} onChange={setAuthEmail} />
+              <InputField label="Password" type="password" value={authPassword} onChange={setAuthPassword} />
+              <div className="toolbar wrap">
+                <button className="primary-button" onClick={() => void authenticateSync('login')} disabled={actionsDisabled || !authEmail.trim() || authPassword.length < 8}>Sign in</button>
+                <button className="secondary-button" onClick={() => void authenticateSync('register')} disabled={actionsDisabled || !authEmail.trim() || authPassword.length < 8}>Create account</button>
+              </div>
+            </div>
+          ) : null}
           <div className="forecast-list">
             <MetricLine label={text.settings.syncStatus} value={syncPhaseLabel} />
             <MetricLine label={text.settings.syncConnection} value={syncConnectionLabel} />
@@ -2332,7 +2375,7 @@ export function App() {
             <MetricLine label={text.settings.syncPendingChanges} value={String(syncStatus?.pendingChanges ?? 0)} />
             <MetricLine label={text.settings.syncBackendUrl} value={syncStatus?.backendUrl ?? text.settings.syncNotConfigured} />
             <MetricLine label={text.settings.syncDevice} value={syncStatus?.deviceId ?? text.settings.syncNotAvailable} />
-            <MetricLine label={text.settings.syncAuthMode} value={syncStatus?.authMode === 'password' ? text.settings.authPassword : syncStatus?.authMode === 'dev-session' ? text.settings.authDevSession : text.settings.syncNotAvailable} />
+            <MetricLine label={text.settings.syncAuthMode} value={syncStatus?.authMode === 'password' ? text.settings.authPassword : text.settings.syncNotAvailable} />
             <MetricLine label={text.settings.syncAccount} value={syncStatus?.accountEmail ?? text.settings.syncNotAvailable} />
             {syncStatus?.lastError ? <MetricLine label={text.settings.syncError} value={syncStatus.lastError} /> : null}
           </div>
@@ -2370,6 +2413,9 @@ export function App() {
               {text.settings.refreshSyncStatus}
             </button>
           </div>
+          {syncStatus?.authenticated ? (
+            <button className="ghost-button" onClick={() => void logoutSync()} disabled={actionsDisabled}>Sign out / switch account</button>
+          ) : null}
           <ToggleField label={text.settings.pauseSyncToggle} checked={Boolean(syncStatus?.paused)} onChange={(checked) => void updateSyncPaused(checked)} />
           <p className="section-note">
             {syncStatus?.enabled ? text.settings.syncLocalFirstNote : text.settings.syncDisabledNote}

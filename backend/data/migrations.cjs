@@ -19,6 +19,8 @@ function runMigrations(db) {
       auth_mode TEXT NOT NULL DEFAULT 'dev-session',
       created_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
+      refresh_token_hash TEXT,
+      refresh_expires_at TEXT,
       last_seen_at TEXT NOT NULL,
       revoked_at TEXT,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -55,6 +57,15 @@ function runMigrations(db) {
   if (!revokedAtColumn) {
     sqlite.exec('ALTER TABLE sessions ADD COLUMN revoked_at TEXT')
   }
+  const refreshTokenColumn = sqlite.prepare("PRAGMA table_info('sessions')").all().some((row) => row.name === 'refresh_token_hash')
+  if (!refreshTokenColumn) {
+    sqlite.exec('ALTER TABLE sessions ADD COLUMN refresh_token_hash TEXT')
+  }
+  const refreshExpiresColumn = sqlite.prepare("PRAGMA table_info('sessions')").all().some((row) => row.name === 'refresh_expires_at')
+  if (!refreshExpiresColumn) {
+    sqlite.exec('ALTER TABLE sessions ADD COLUMN refresh_expires_at TEXT')
+  }
+  sqlite.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_refresh_token_hash ON sessions(refresh_token_hash) WHERE refresh_token_hash IS NOT NULL')
 
   const hasUsers = sqlite.prepare('SELECT COUNT(*) AS count FROM users').get().count > 0
   const hasSessions = sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get().count > 0
@@ -73,8 +84,8 @@ function runMigrations(db) {
     VALUES (?, ?, ?, ?, ?, ?)
   `)
   const insertSession = sqlite.prepare(`
-    INSERT OR IGNORE INTO sessions (id, user_id, token_hash, label, auth_mode, created_at, expires_at, last_seen_at, revoked_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO sessions (id, user_id, token_hash, label, auth_mode, created_at, expires_at, refresh_token_hash, refresh_expires_at, last_seen_at, revoked_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const insertRecord = sqlite.prepare(`
     INSERT OR IGNORE INTO finance_records (
@@ -104,6 +115,8 @@ function runMigrations(db) {
         session.authMode ?? 'dev-session',
         session.createdAt,
         session.expiresAt,
+        null,
+        null,
         session.lastSeenAt ?? session.createdAt,
         session.revokedAt ?? null
       )

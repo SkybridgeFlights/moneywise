@@ -41,6 +41,9 @@ const api: MoneywiseApi = {
     console.info('[preload] moneywise.uploadAllLocalData invoked')
     return ipcRenderer.invoke('sync:uploadAllLocal')
   },
+  login: (email, password) => ipcRenderer.invoke('auth:login', { email, password }),
+  register: (email, password) => ipcRenderer.invoke('auth:register', { email, password }),
+  logout: () => ipcRenderer.invoke('auth:logout'),
   saveIncome: (input) => ipcRenderer.invoke('income:save', input),
   deleteIncome: (id) => ipcRenderer.invoke('income:delete', id),
   saveExpense: (input) => ipcRenderer.invoke('expense:save', input),

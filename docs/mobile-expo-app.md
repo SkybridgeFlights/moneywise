@@ -31,8 +31,7 @@ Set these Expo public variables before starting the app:
 
 - `EXPO_PUBLIC_MONEYWISE_SYNC_ENABLED=true`
 - `EXPO_PUBLIC_MONEYWISE_SYNC_URL=http://127.0.0.1:8787`
-- `EXPO_PUBLIC_MONEYWISE_SYNC_EMAIL=mobile-sync@example.com`
-- `EXPO_PUBLIC_MONEYWISE_SYNC_PASSWORD=your-password`
+- Never configure passwords or tokens through `EXPO_PUBLIC_*`; users authenticate interactively in the app.
 - `EXPO_PUBLIC_MONEYWISE_SYNC_DEVICE_ID=iphone-main`
 
 If the password is omitted, the mobile app falls back to the backend dev-session flow when allowed.

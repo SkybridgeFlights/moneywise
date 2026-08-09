@@ -51,6 +51,12 @@ function createRouter({ authHandlers, syncHandlers, backendInfo }) {
         return
       }
 
+      if (url.pathname === '/api/auth/refresh' && request.method === 'POST') {
+        const body = await readJsonBody(request)
+        await authHandlers.refresh(request, response, body)
+        return
+      }
+
       if (url.pathname === '/api/auth/session' && request.method === 'GET') {
         await authHandlers.session(request, response)
         return

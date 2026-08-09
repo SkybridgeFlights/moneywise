@@ -158,6 +158,10 @@ export const importFormatSchema = exportFormatSchema
 export const idSchema = trimmedString(1, 80)
 export const monthSchema = monthId
 export const booleanSchema = z.boolean()
+export const authCredentialsSchema = z.object({
+  email: z.string().trim().email().max(254),
+  password: z.string().min(8).max(200)
+})
 export const deleteCategoryInputSchema = z.object({
   categoryId: trimmedString(1, 80),
   mode: z.enum(['reassign', 'fallback']),

@@ -106,7 +106,11 @@ app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.moneywise.desktop')
   const database = new FinanceDatabase()
   const { config: syncConfig, debug: syncConfigDebug } = readDesktopSyncConfigWithDebug()
-  logMain('SYNC CONFIG DEBUG', syncConfigDebug)
+  logMain('Sync configuration loaded', {
+    enabled: syncConfigDebug.enabledParsed,
+    configured: Boolean(syncConfigDebug.backendUrl),
+    deviceConfigured: Boolean(syncConfigDebug.deviceId)
+  })
   const syncStateStore = new DesktopSyncStateStore(join(logDir, 'moneywise', 'sync-state.json'))
   const syncManager = new DesktopSyncManager(database, syncStateStore, syncConfig, logMain, () => {
     logMain('SYNC PULL RELOAD RENDERER')

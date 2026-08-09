@@ -35,11 +35,9 @@ Desktop sync is still config-based:
 
 - `MONEYWISE_SYNC_ENABLED=true`
 - `MONEYWISE_SYNC_URL=http://127.0.0.1:8787`
-- `MONEYWISE_SYNC_EMAIL=desktop-sync@example.com`
-- `MONEYWISE_SYNC_PASSWORD=your-password`
 - `MONEYWISE_SYNC_DEVICE_ID=desktop-main`
 
-If `MONEYWISE_SYNC_PASSWORD` is omitted, the desktop client falls back to the dev-session auth route when the backend allows it.
+Users sign in or create an account interactively from Settings. Passwords are sent only to the authentication endpoint and are never stored in build configuration.
 
 ## Sync flow
 

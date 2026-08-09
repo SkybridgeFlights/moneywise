@@ -19,7 +19,7 @@ services:
       - key: DATABASE_PATH
         value: /data/moneywise-sync.sqlite
       - key: MONEYWISE_BACKEND_AUTH_MODE
-        value: hybrid
+        value: password-only
       - key: MONEYWISE_BACKEND_SESSION_TTL_DAYS
         value: 30
       - key: AUTH_SECRET

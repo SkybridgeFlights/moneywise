@@ -27,7 +27,7 @@ Required backend environment variables:
 - `HOST=0.0.0.0`
 - `DATABASE_PATH=/data/moneywise-sync.sqlite`
 - `AUTH_SECRET=<strong-random-secret>`
-- `MONEYWISE_BACKEND_AUTH_MODE=hybrid`
+- `MONEYWISE_BACKEND_AUTH_MODE=password-only`
 - `MONEYWISE_BACKEND_SESSION_TTL_DAYS=30`
 
 Notes:
@@ -41,9 +41,9 @@ Required desktop sync environment:
 
 - `MONEYWISE_SYNC_ENABLED=true`
 - `MONEYWISE_SYNC_URL=https://your-moneywise-backend.example.com`
-- `MONEYWISE_SYNC_EMAIL=desktop-sync@example.com`
-- `MONEYWISE_SYNC_PASSWORD=<account-password>`
 - `MONEYWISE_SYNC_DEVICE_ID=desktop-main`
+
+Users authenticate interactively in the desktop application. Passwords are never build configuration.
 
 ## Mobile production sync configuration
 
@@ -51,9 +51,9 @@ Set these Expo public variables:
 
 - `EXPO_PUBLIC_MONEYWISE_SYNC_ENABLED=true`
 - `EXPO_PUBLIC_MONEYWISE_SYNC_URL=https://your-moneywise-backend.example.com`
-- `EXPO_PUBLIC_MONEYWISE_SYNC_EMAIL=mobile-sync@example.com`
-- `EXPO_PUBLIC_MONEYWISE_SYNC_PASSWORD=<account-password>`
 - `EXPO_PUBLIC_MONEYWISE_SYNC_DEVICE_ID=iphone-main`
+
+Users authenticate interactively in the mobile application. Never place passwords, access tokens, refresh tokens, or other secrets in `EXPO_PUBLIC_*` variables because those values are embedded in the application bundle.
 
 ## Desktop production build
 
