@@ -20,28 +20,33 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^4.0.0",
-    "better-sqlite3": "^12.0.0",
-    "date-fns": "^4.1.0",
+    "better-sqlite3": "^12.11.1",
+    "date-fns": "^4.4.0",
+    "exceljs": "^4.4.0",
     "lucide-react": "^0.511.0",
-    "papaparse": "^5.5.3",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
+    "papaparse": "^5.5.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "recharts": "^2.15.3",
-    "xlsx": "^0.18.5",
     "zod": "^3.25.42"
   },
   "devDependencies": {
-    "@types/node": "^22.15.21",
+    "@types/node": "^22.20.1",
     "@types/papaparse": "^5.3.16",
-    "@types/react": "^19.1.4",
-    "@types/react-dom": "^19.1.5",
-    "@vitejs/plugin-react": "^4.5.0",
-    "electron": "^35.2.1",
-    "electron-builder": "^26.8.1",
-    "electron-vite": "^3.0.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^41.10.4",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
     "typescript": "^5.8.3",
-    "vite": "^6.3.5",
-    "vitest": "^4.1.5"
+    "vite": "^7.3.6",
+    "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "nanoid": "^3.3.17",
+    "postcss": "^8.5.26",
+    "uuid": "^11.1.1"
   },
   "build": {
     "appId": "com.moneywise.desktop",

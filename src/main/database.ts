@@ -4,7 +4,7 @@ import { app } from 'electron'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import Papa from 'papaparse'
-import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 import { calculateFinanceSnapshot } from '@shared/finance'
 import {
   defaultCategories,
@@ -1216,7 +1216,7 @@ export class FinanceDatabase implements FinanceRepository {
     return this.createSnapshot()
   }
 
-  exportData(format: 'json' | 'csv' | 'xlsx', targetPath: string): { success: boolean; filePath: string } {
+  async exportData(format: 'json' | 'csv' | 'xlsx', targetPath: string): Promise<{ success: boolean; filePath: string }> {
     const snapshot = this.createSnapshot()
     if (format === 'json') {
       writeFileSync(targetPath, JSON.stringify(snapshot, null, 2), 'utf8')
@@ -1229,22 +1229,27 @@ export class FinanceDatabase implements FinanceRepository {
       return { success: true, filePath: targetPath }
     }
 
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(snapshot.incomes.map((entry) => ({ ...entry, currency: snapshot.settings.currency }))), 'Incomes')
-    XLSX.utils.book_append_sheet(
-      workbook,
-      XLSX.utils.json_to_sheet(snapshot.expenses.map((entry) => ({ ...entry, tags: entry.tags.join('|'), currency: snapshot.settings.currency }))),
-      'Expenses'
-    )
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(snapshot.goals.map((entry) => ({ ...entry, currency: snapshot.settings.currency }))), 'Goals')
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(snapshot.debts.map((entry) => ({ ...entry, currency: snapshot.settings.currency }))), 'Debts')
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(snapshot.goalContributions.map((entry) => ({ ...entry, currency: snapshot.settings.currency }))), 'GoalContributions')
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(snapshot.monthlySummaries.map((entry) => ({ ...entry, currency: snapshot.settings.currency }))), 'MonthlySummary')
-    XLSX.writeFile(workbook, targetPath)
+    const workbook = new ExcelJS.Workbook()
+    const appendSheet = (name: string, rows: Record<string, unknown>[]): void => {
+      const worksheet = workbook.addWorksheet(name)
+      const headers = [...new Set(rows.flatMap((row) => Object.keys(row)))]
+      if (headers.length === 0) return
+      worksheet.addRow(headers)
+      rows.forEach((row) => worksheet.addRow(headers.map((header) => row[header] ?? null)))
+      worksheet.getRow(1).font = { bold: true }
+      worksheet.views = [{ state: 'frozen', ySplit: 1 }]
+    }
+    appendSheet('Incomes', snapshot.incomes.map((entry) => ({ ...entry, currency: snapshot.settings.currency })))
+    appendSheet('Expenses', snapshot.expenses.map((entry) => ({ ...entry, tags: entry.tags.join('|'), currency: snapshot.settings.currency })))
+    appendSheet('Goals', snapshot.goals.map((entry) => ({ ...entry, currency: snapshot.settings.currency })))
+    appendSheet('Debts', snapshot.debts.map((entry) => ({ ...entry, currency: snapshot.settings.currency })))
+    appendSheet('GoalContributions', snapshot.goalContributions.map((entry) => ({ ...entry, currency: snapshot.settings.currency })))
+    appendSheet('MonthlySummary', snapshot.monthlySummaries.map((entry) => ({ ...entry, currency: snapshot.settings.currency })))
+    await workbook.xlsx.writeFile(targetPath)
     return { success: true, filePath: targetPath }
   }
 
-  importData(format: 'json' | 'csv' | 'xlsx', sourcePath: string): AppSnapshot {
+  async importData(format: 'json' | 'csv' | 'xlsx', sourcePath: string): Promise<AppSnapshot> {
     if (format === 'json') {
       const raw = snapshotImportSchema.parse(JSON.parse(readFileSync(sourcePath, 'utf8')))
       const tx = this.db.transaction(() => {
@@ -1323,12 +1328,26 @@ export class FinanceDatabase implements FinanceRepository {
       return this.createSnapshot()
     }
 
-    const workbook = XLSX.readFile(sourcePath)
-    const incomeRows = XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets[workbook.SheetNames[0]] ?? {})
-    const expenseRows = workbook.Sheets.Expenses
-      ? XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets.Expenses)
-      : []
-    const debtRows = workbook.Sheets.Debts ? XLSX.utils.sheet_to_json<Record<string, string>>(workbook.Sheets.Debts) : []
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.readFile(sourcePath)
+    const readRows = (worksheet: ExcelJS.Worksheet | undefined): Record<string, string>[] => {
+      if (!worksheet) return []
+      const headers = (worksheet.getRow(1).values as ExcelJS.CellValue[]).slice(1).map(String)
+      const rows: Record<string, string>[] = []
+      worksheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) return
+        const result: Record<string, string> = {}
+        headers.forEach((header, index) => {
+          const value = row.getCell(index + 1).value
+          result[header] = value == null ? '' : String(value)
+        })
+        rows.push(result)
+      })
+      return rows
+    }
+    const incomeRows = readRows(workbook.getWorksheet('Incomes') ?? workbook.worksheets[0])
+    const expenseRows = readRows(workbook.getWorksheet('Expenses'))
+    const debtRows = readRows(workbook.getWorksheet('Debts'))
     incomeRows.forEach((entry) => {
       if (entry.name && entry.amount && entry.date) {
         this.saveIncome({

@@ -127,12 +127,12 @@ export class FinanceService {
     return snapshot
   }
 
-  exportData(format: 'json' | 'csv' | 'xlsx', targetPath: string): { success: boolean; filePath: string } {
+  exportData(format: 'json' | 'csv' | 'xlsx', targetPath: string): Promise<{ success: boolean; filePath: string }> {
     return this.repository.exportData(format, targetPath)
   }
 
-  importData(format: 'json' | 'csv' | 'xlsx', sourcePath: string): AppSnapshot {
-    const snapshot = this.repository.importData(format, sourcePath)
+  async importData(format: 'json' | 'csv' | 'xlsx', sourcePath: string): Promise<AppSnapshot> {
+    const snapshot = await this.repository.importData(format, sourcePath)
     this.onMutation?.(`data.import.${format}`)
     return snapshot
   }

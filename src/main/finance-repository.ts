@@ -32,7 +32,7 @@ export interface FinanceRepository {
   saveSettings(input: Settings): AppSnapshot
   seedDemoData(): AppSnapshot
   resetData(): AppSnapshot
-  exportData(format: 'json' | 'csv' | 'xlsx', targetPath: string): { success: boolean; filePath: string }
-  importData(format: 'json' | 'csv' | 'xlsx', sourcePath: string): AppSnapshot
+  exportData(format: 'json' | 'csv' | 'xlsx', targetPath: string): Promise<{ success: boolean; filePath: string }>
+  importData(format: 'json' | 'csv' | 'xlsx', sourcePath: string): Promise<AppSnapshot>
   runMonthlyClose(month: string): AppSnapshot
 }
