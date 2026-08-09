@@ -71,6 +71,8 @@ test('production dev-session endpoint returns 403', async () => {
   })
   assert.equal(result.response.status, 403)
   assert.match(result.body.error, /disabled/i)
+  const malformed = await json(`${baseUrl}/api/auth/dev-session`, { method: 'POST', body: '{}' })
+  assert.equal(malformed.response.status, 403)
 })
 
 test('interactive login issues short-lived access and rotating refresh tokens', async () => {

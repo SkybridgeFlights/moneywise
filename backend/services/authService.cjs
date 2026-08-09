@@ -102,6 +102,9 @@ function createAuthService({ config, userRepository, sessionRepository }) {
   }
 
   return {
+    isDevSessionEnabled() {
+      return config.nodeEnv !== 'production' && config.authMode === 'hybrid'
+    },
     createDevSession(input) {
       ensureDevSessionsAllowed()
       const now = new Date().toISOString()

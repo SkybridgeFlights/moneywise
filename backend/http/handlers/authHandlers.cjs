@@ -22,6 +22,10 @@ function createAuthHandlers({ authService, sendJson, loginLimiter }) {
   return {
     async createDevSession(request, response, body) {
       try {
+        if (!authService.isDevSessionEnabled()) {
+          sendJson(response, 403, { error: 'Development sessions are disabled.' })
+          return
+        }
         const parsed = userSessionSchema.parse(body)
         const session = authService.createDevSession(parsed)
         sendJson(response, 201, session)
