@@ -20,13 +20,16 @@ function writeStartupLog(line: string): void {
 }
 
 function logMain(message: string, detail?: unknown): void {
+  const sanitizedDetail = detail && typeof detail === 'object'
+    ? JSON.parse(JSON.stringify(detail, (key, value) => /token|password|secret|deviceId/i.test(key) ? '[redacted]' : value))
+    : detail
   if (detail === undefined) {
-    console.log(`[main] ${message}`)
+    if (!app.isPackaged) console.log(`[main] ${message}`)
     writeStartupLog(`[main] ${message}`)
     return
   }
-  console.log(`[main] ${message}`, detail)
-  writeStartupLog(`[main] ${message} ${JSON.stringify(detail)}`)
+  if (!app.isPackaged) console.log(`[main] ${message}`, sanitizedDetail)
+  writeStartupLog(`[main] ${message} ${JSON.stringify(sanitizedDetail)}`)
 }
 
 function createWindow(): void {
@@ -44,8 +47,8 @@ function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1540,
     height: 960,
-    minWidth: 1280,
-    minHeight: 820,
+    minWidth: 960,
+    minHeight: 640,
     show: false,
     autoHideMenuBar: true,
     title: 'MoneyWise',
@@ -76,9 +79,11 @@ function createWindow(): void {
   mainWindow.webContents.on('render-process-gone', (_, details) => {
     logMain('Renderer process gone', details)
   })
-  mainWindow.webContents.on('console-message', (_, level, message, line, sourceId) => {
-    console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`)
-  })
+  if (!app.isPackaged) {
+    mainWindow.webContents.on('console-message', (_, level, message, line, sourceId) => {
+      console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`)
+    })
+  }
   mainWindow.webContents.on('preload-error', (_, preloadPathValue, error) => {
     logMain('Preload error', { preloadPath: preloadPathValue, error: error.message, stack: error.stack })
   })
@@ -125,8 +130,7 @@ app.whenReady().then(() => {
   registerIpcHandlers(financeService, syncManager)
   logMain('Desktop sync foundation', {
     enabled: syncConfig.enabled,
-    backendUrl: syncConfig.backendUrl,
-    deviceId: syncConfig.backendUrl ? syncStateStore.getOrCreateDeviceId(syncConfig.deviceId) : null
+    configured: Boolean(syncConfig.backendUrl)
   })
 
   app.on('browser-window-created', (_, window) => {
