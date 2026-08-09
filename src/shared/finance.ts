@@ -26,6 +26,7 @@ import type {
   GoalInsight,
   IncomeRecord,
   MonthlySummary,
+  SmartSpendingPlanner,
   Settings
 } from './types'
 
@@ -676,6 +677,48 @@ function buildForecast(
   }
 }
 
+function buildSmartSpendingPlanner(
+  forecast: AnalyticsSnapshot['forecast'],
+  goals: GoalInsight[]
+): SmartSpendingPlanner {
+  const recommendedGoalContributionsThisMonth = round2(
+    goals.reduce((sum, goal) => {
+      if (goal.status === 'completed') return sum
+      return sum + goal.monthlyRequiredContribution
+    }, 0)
+  )
+  const remainingUsableBalance = round2(forecast.balanceAfterCommitments)
+  const safeDailySpending = round2(remainingUsableBalance / Math.max(forecast.remainingDaysUntilMonthEnd, 1))
+  const safeWeeklySpending = round2(remainingUsableBalance / Math.max(forecast.remainingWeeksUntilMonthEnd, 1))
+  const averageDailySpend = Math.max(forecast.averageDailySpend, 0)
+
+  let status: SmartSpendingPlanner['status'] = 'comfortable'
+  if (remainingUsableBalance < 0) {
+    status = 'not-enough'
+  } else if (safeDailySpending <= 0 || safeDailySpending < averageDailySpend * 0.75) {
+    status = 'risky'
+  } else if (safeDailySpending < averageDailySpend * 1.05) {
+    status = 'tight'
+  }
+
+  return {
+    currentRemainingBalance: forecast.remainingBalance,
+    remainingUsableBalance,
+    safeDailySpending,
+    safeWeeklySpending,
+    safeMonthlyFlexibleSpending: remainingUsableBalance,
+    remainingDaysInMonth: forecast.remainingDaysUntilMonthEnd,
+    remainingWeeksInMonth: forecast.remainingWeeksUntilMonthEnd,
+    debtInstallmentsDueThisMonth: forecast.installmentsDueThisMonth,
+    plannedGoalContributionsThisMonth: forecast.optionalGoalContributionsThisMonth,
+    recommendedGoalContributionsThisMonth,
+    fixedAndRecurringExpensesStillDueThisMonth: forecast.unpaidFixedExpensesDueThisMonth,
+    goalsIncludedInPlanner: forecast.goalsIncludedInForecast,
+    shortfallAmount: round2(Math.max(-remainingUsableBalance, 0)),
+    status
+  }
+}
+
 function buildAlerts(
   dashboard: DashboardMetrics,
   categoryBudgets: CategoryBudgetInsight[],
@@ -839,6 +882,7 @@ export function calculateFinanceSnapshot(input: FinanceInput): {
     forecast,
     settings
   )
+  const smartPlanner = buildSmartSpendingPlanner(forecast, goalInsights)
 
   const highestSpendingCategories = [...categoryBudgets]
     .sort((left, right) => right.actual - left.actual)
@@ -890,6 +934,7 @@ export function calculateFinanceSnapshot(input: FinanceInput): {
       savings: entry.savings
     })),
     forecast,
+    smartPlanner,
     goalInsights,
     debtInsights,
     availableMonths: monthlySummaries.map((entry) => entry.month).sort((left, right) => right.localeCompare(left)),

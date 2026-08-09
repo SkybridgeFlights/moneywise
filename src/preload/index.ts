@@ -3,11 +3,44 @@ import type { MoneywiseApi } from '@shared/contracts'
 
 console.info('[preload] Preload bridge starting')
 
+const syncApi = {
+  syncNow: () => {
+    console.info('[preload] syncApi.syncNow invoked')
+    return ipcRenderer.invoke('sync:now')
+  },
+  refreshSyncState: () => {
+    console.info('[preload] syncApi.refreshSyncState invoked')
+    return ipcRenderer.invoke('sync:refresh')
+  },
+  uploadAllData: () => {
+    console.info('[preload] syncApi.uploadAllData invoked')
+    return ipcRenderer.invoke('sync:uploadAll')
+  },
+  refresh: () => {
+    console.info('[preload] syncApi.refresh invoked')
+    return ipcRenderer.invoke('sync:refresh')
+  },
+  uploadAll: () => {
+    console.info('[preload] syncApi.uploadAll invoked')
+    return ipcRenderer.invoke('sync:uploadAll')
+  }
+}
+
 const api: MoneywiseApi = {
   getSnapshot: () => ipcRenderer.invoke('app:getSnapshot'),
-  getSyncStatus: () => ipcRenderer.invoke('sync:getStatus'),
-  syncNow: () => ipcRenderer.invoke('sync:runNow'),
+  getSyncStatus: () => {
+    console.info('[preload] moneywise.getSyncStatus invoked')
+    return ipcRenderer.invoke('sync:getStatus')
+  },
+  syncNow: () => {
+    console.info('[preload] moneywise.syncNow invoked')
+    return ipcRenderer.invoke('sync:runNow')
+  },
   setSyncPaused: (paused) => ipcRenderer.invoke('sync:setPaused', paused),
+  uploadAllLocalData: () => {
+    console.info('[preload] moneywise.uploadAllLocalData invoked')
+    return ipcRenderer.invoke('sync:uploadAllLocal')
+  },
   saveIncome: (input) => ipcRenderer.invoke('income:save', input),
   deleteIncome: (id) => ipcRenderer.invoke('income:delete', id),
   saveExpense: (input) => ipcRenderer.invoke('expense:save', input),
@@ -31,6 +64,7 @@ const api: MoneywiseApi = {
 
 try {
   contextBridge.exposeInMainWorld('moneywise', api)
+  contextBridge.exposeInMainWorld('syncApi', syncApi)
   console.info('[preload] Bridge exposed successfully')
 } catch (error) {
   console.error('[preload] Failed to expose bridge', error)

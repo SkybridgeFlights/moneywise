@@ -126,6 +126,19 @@ export const budgetPlanInputSchema = z.object({
   rules: z.array(budgetRuleSchema).max(100)
 })
 
+const balanceCorrectionSchema = z
+  .object({
+    id: trimmedString(1, 80),
+    effectiveDate: z.string().datetime(),
+    calculatedBalanceBefore: z.number().finite(),
+    correctedBalance: z.number().finite(),
+    difference: z.number().finite(),
+    note: noteString,
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime()
+  })
+  .nullable()
+
 export const settingsInputSchema = z.object({
   language: z.enum(['ar', 'en']),
   currency: z.string().regex(/^[A-Z]{3}$/),
@@ -136,7 +149,8 @@ export const settingsInputSchema = z.object({
   notificationsEnabled: z.boolean(),
   includeOptionalGoalsInForecast: z.boolean(),
   backupFrequency: z.enum(['manual', 'weekly', 'monthly']),
-  rtl: z.boolean()
+  rtl: z.boolean(),
+  balanceCorrection: balanceCorrectionSchema.optional().default(null)
 })
 
 export const exportFormatSchema = z.enum(['json', 'csv', 'xlsx'])

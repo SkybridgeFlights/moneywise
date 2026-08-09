@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 export interface DesktopSyncConfig {
   enabled: boolean
   backendUrl: string | null
@@ -6,17 +9,94 @@ export interface DesktopSyncConfig {
   syncPassword: string | null
 }
 
-export function readDesktopSyncConfig(): DesktopSyncConfig {
-  const enabled = process.env.MONEYWISE_SYNC_ENABLED === 'true'
-  const backendUrl = process.env.MONEYWISE_SYNC_URL?.trim() || null
-  const deviceId = process.env.MONEYWISE_SYNC_DEVICE_ID?.trim() || null
-  const syncEmail = process.env.MONEYWISE_SYNC_EMAIL?.trim() || null
-  const syncPassword = process.env.MONEYWISE_SYNC_PASSWORD?.trim() || null
-  return {
-    enabled: enabled && Boolean(backendUrl),
-    backendUrl,
-    deviceId,
-    syncEmail,
-    syncPassword
+export interface DesktopSyncConfigDebug {
+  enabledRaw: string | null
+  enabledParsed: boolean
+  backendUrl: string | null
+  deviceId: string | null
+  syncEmail: string | null
+  hasPassword: boolean
+}
+
+function parseEnvFile(content: string): Record<string, string> {
+  const values: Record<string, string> = {}
+  content.split(/\r?\n/).forEach((line) => {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) {
+      return
+    }
+    const separatorIndex = trimmed.indexOf('=')
+    if (separatorIndex === -1) {
+      return
+    }
+    const key = trimmed.slice(0, separatorIndex).trim()
+    if (!key) {
+      return
+    }
+    const rawValue = trimmed.slice(separatorIndex + 1).trim()
+    const unquoted =
+      (rawValue.startsWith('"') && rawValue.endsWith('"')) || (rawValue.startsWith("'") && rawValue.endsWith("'"))
+        ? rawValue.slice(1, -1)
+        : rawValue
+    values[key] = unquoted
+  })
+  return values
+}
+
+function loadDesktopEnvFileValues(): Record<string, string> {
+  const candidates = ['.env', '.env.local', '.env.backend', '.env.backend.local', '.env.backend.example']
+  const merged: Record<string, string> = {}
+  candidates.forEach((filename) => {
+    const filePath = join(process.cwd(), filename)
+    if (!existsSync(filePath)) {
+      return
+    }
+    try {
+      Object.assign(merged, parseEnvFile(readFileSync(filePath, 'utf8')))
+    } catch {
+      // ignore malformed env fallback files and continue using process.env
+    }
+  })
+  return merged
+}
+
+function readEnvValue(key: string, fileValues: Record<string, string>): string | null {
+  const processValue = process.env[key]
+  if (typeof processValue === 'string' && processValue.trim()) {
+    return processValue.trim()
   }
+  const fileValue = fileValues[key]
+  return typeof fileValue === 'string' && fileValue.trim() ? fileValue.trim() : null
+}
+
+export function readDesktopSyncConfigWithDebug(): { config: DesktopSyncConfig; debug: DesktopSyncConfigDebug } {
+  const fileValues = loadDesktopEnvFileValues()
+  const enabledRaw = readEnvValue('MONEYWISE_SYNC_ENABLED', fileValues)
+  const backendUrl = readEnvValue('MONEYWISE_SYNC_URL', fileValues)
+  const deviceId = readEnvValue('MONEYWISE_SYNC_DEVICE_ID', fileValues)
+  const syncEmail = readEnvValue('MONEYWISE_SYNC_EMAIL', fileValues)
+  const syncPassword = readEnvValue('MONEYWISE_SYNC_PASSWORD', fileValues)
+  const enabledParsed = (enabledRaw ?? '').trim().toLowerCase() === 'true'
+
+  return {
+    config: {
+      enabled: enabledParsed && Boolean(backendUrl),
+      backendUrl,
+      deviceId,
+      syncEmail,
+      syncPassword
+    },
+    debug: {
+      enabledRaw,
+      enabledParsed,
+      backendUrl,
+      deviceId,
+      syncEmail,
+      hasPassword: Boolean(syncPassword)
+    }
+  }
+}
+
+export function readDesktopSyncConfig(): DesktopSyncConfig {
+  return readDesktopSyncConfigWithDebug().config
 }

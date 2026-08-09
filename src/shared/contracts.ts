@@ -61,6 +61,7 @@ export interface MoneywiseApi {
   getSyncStatus(): Promise<SyncStatusSnapshot>
   syncNow(): Promise<SyncStatusSnapshot>
   setSyncPaused(paused: boolean): Promise<SyncStatusSnapshot>
+  uploadAllLocalData(): Promise<SyncStatusSnapshot>
   saveIncome(input: SaveIncomeInput): Promise<AppSnapshot>
   deleteIncome(id: string): Promise<AppSnapshot>
   saveExpense(input: SaveExpenseInput): Promise<AppSnapshot>

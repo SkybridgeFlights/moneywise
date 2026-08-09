@@ -251,16 +251,20 @@ function mapAppliedHash(record: SyncableLocalRecord | undefined, deletedAt: stri
 
 export class DesktopSyncManager {
   private syncTimer: NodeJS.Timeout | null = null
+  private pollTimer: NodeJS.Timeout | null = null
+  private activeSync: Promise<void> | null = null
   private syncInFlight = false
   private syncQueued = false
   private backendReachable = false
   private phase: SyncStatusSnapshot['phase'] = 'disabled'
+  private rendererReloadPending = false
 
   constructor(
     private readonly database: FinanceDatabase,
     private readonly stateStore: DesktopSyncStateStore,
     private readonly config: DesktopSyncConfig,
-    private readonly log: Logger
+    private readonly log: Logger,
+    private readonly reloadRendererAfterPull?: () => void
   ) {}
 
   start(): void {
@@ -269,14 +273,20 @@ export class DesktopSyncManager {
       return
     }
     this.scheduleSync('startup')
+    if (!this.pollTimer) {
+      this.pollTimer = setInterval(() => {
+        this.scheduleSync('poll')
+      }, 7000)
+    }
   }
 
   getStatus(): SyncStatusSnapshot {
+    this.log('Desktop sync status requested')
     const persisted = this.stateStore.read()
     const enabled = this.config.enabled && Boolean(this.config.backendUrl)
     const effectiveEnabled = enabled && !persisted.paused
     const pendingChanges = effectiveEnabled ? this.collectPendingLocalChanges(this.database.getDomainState(), persisted.manifest).length : 0
-    return {
+    const status = {
       enabled,
       paused: persisted.paused,
       backendUrl: this.config.backendUrl,
@@ -291,14 +301,84 @@ export class DesktopSyncManager {
       lastError: persisted.lastError,
       phase: enabled ? this.phase : 'disabled'
     }
+    this.log('SYNC STATUS DEBUG', {
+      enabled: status.enabled,
+      paused: status.paused,
+      backendUrl: status.backendUrl,
+      connection: status.backendReachable,
+      authMode: status.authMode,
+      account: status.accountEmail,
+      pendingChanges: status.pendingChanges
+    })
+    return status
   }
 
   async syncNow(): Promise<SyncStatusSnapshot> {
-    if (!this.config.enabled || !this.config.backendUrl) {
-      this.phase = 'disabled'
+    const persisted = this.stateStore.read()
+    const guard = {
+      enabled: this.config.enabled,
+      paused: persisted.paused,
+      backendUrl: this.config.backendUrl,
+      authToken: Boolean(persisted.authToken),
+      syncInFlight: this.syncInFlight
+    }
+    this.log('SYNC NOW START', guard)
+    if (!this.config.enabled || !this.config.backendUrl || persisted.paused) {
+      this.log('SYNC NOW BLOCKED', guard)
+      this.phase = !this.config.enabled || !this.config.backendUrl ? 'disabled' : 'idle'
       return this.getStatus()
     }
+    if (this.activeSync) {
+      this.log('SYNC NOW WAITING FOR ACTIVE SYNC', guard)
+      await this.activeSync.catch(() => undefined)
+    }
     await this.runSync('manual')
+    return this.getStatus()
+  }
+
+  async uploadAllLocalData(): Promise<SyncStatusSnapshot> {
+    if (!this.config.enabled || !this.config.backendUrl || this.syncInFlight) {
+      return this.getStatus()
+    }
+
+    this.syncInFlight = true
+    this.phase = 'syncing'
+    this.log('Desktop full upload requested', {
+      pendingLocal: this.collectPendingLocalChanges(this.database.getDomainState(), this.stateStore.read().manifest).length
+    })
+    try {
+      const deviceId = this.stateStore.getOrCreateDeviceId(this.config.deviceId)
+      await this.checkHealth()
+      let syncState = await this.ensureSession(deviceId)
+      if (!syncState.bootstrapCompleted) {
+        syncState = await this.bootstrap(syncState)
+      }
+      syncState = await this.pullChanges(syncState)
+      syncState = await this.forceUploadAllLocalRecords(syncState, deviceId)
+      this.stateStore.update((state) => ({
+        ...state,
+        lastSyncAt: new Date().toISOString(),
+        lastError: null
+      }))
+      this.phase = 'idle'
+      this.log('Desktop full upload completed', {
+        cursor: syncState.cursor,
+        pendingLocal: this.collectPendingLocalChanges(this.database.getDomainState(), syncState.manifest).length
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.backendReachable = false
+      this.stateStore.update((state) => ({
+        ...state,
+        authToken: message.includes('[401]') ? null : state.authToken,
+        lastError: message
+      }))
+      this.phase = 'error'
+      this.log('Desktop full upload failed', { error: message })
+    } finally {
+      this.syncInFlight = false
+    }
+
     return this.getStatus()
   }
 
@@ -342,27 +422,45 @@ export class DesktopSyncManager {
 
   private async runSync(reason: string): Promise<void> {
     const currentState = this.stateStore.read()
+    const guard = {
+      reason,
+      enabled: this.config.enabled,
+      paused: currentState.paused,
+      backendUrl: this.config.backendUrl,
+      authToken: Boolean(currentState.authToken),
+      syncInFlight: this.syncInFlight
+    }
     if (!this.config.enabled || !this.config.backendUrl || currentState.paused || this.syncInFlight) {
+      this.log('SYNC RUN BLOCKED', guard)
       return
     }
 
     this.syncInFlight = true
     this.phase = 'syncing'
-    try {
+    this.activeSync = (async () => {
       const deviceId = this.stateStore.getOrCreateDeviceId(this.config.deviceId)
       await this.checkHealth()
       let syncState = await this.ensureSession(deviceId)
       if (!syncState.bootstrapCompleted) {
         syncState = await this.bootstrap(syncState)
       }
+      this.log('SYNC PULL START')
       syncState = await this.pullChanges(syncState)
-      await this.pushLocalChanges(syncState, deviceId)
+      this.log('SYNC PULL SUCCESS')
+      this.log('SYNC PUSH START')
+      syncState = await this.pushLocalChanges(syncState, deviceId)
+      this.log('SYNC PUSH SUCCESS')
       this.stateStore.update((state) => ({
         ...state,
         lastSyncAt: new Date().toISOString(),
         lastError: null
       }))
       this.phase = 'idle'
+      this.log('SYNC COMPLETE', { reason })
+    })()
+
+    try {
+      await this.activeSync
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.backendReachable = false
@@ -377,7 +475,12 @@ export class DesktopSyncManager {
         error: message
       })
     } finally {
+      this.activeSync = null
       this.syncInFlight = false
+      if (this.rendererReloadPending) {
+        this.rendererReloadPending = false
+        setTimeout(() => this.reloadRendererAfterPull?.(), 0)
+      }
       if (this.syncQueued) {
         this.syncQueued = false
         this.scheduleSync('queued')
@@ -493,6 +596,7 @@ export class DesktopSyncManager {
 
     if (recordsToApply.length > 0) {
       this.database.applyRemoteSyncChanges(sortRemoteChanges(recordsToApply))
+      this.rendererReloadPending = true
       const refreshedIndex = buildSyncableStateIndex(this.database.getDomainState())
       recordsToApply.forEach((entry) => {
         const key = createSyncRecordKey(entry.entityType, entry.recordId)
@@ -556,6 +660,7 @@ export class DesktopSyncManager {
 
     if (recordsToApply.length > 0) {
       this.database.applyRemoteSyncChanges(recordsToApply)
+      this.rendererReloadPending = true
     }
 
     const refreshedIndex = buildSyncableStateIndex(this.database.getDomainState())
@@ -571,10 +676,166 @@ export class DesktopSyncManager {
     })
   }
 
-  private async pushLocalChanges(syncState: DesktopSyncStateData, deviceId: string): Promise<void> {
+  private async forceUploadAllLocalRecords(syncState: DesktopSyncStateData, deviceId: string): Promise<DesktopSyncStateData> {
+    const response = await this.requestJson('/api/sync/bootstrap', { method: 'GET' }, syncState.authToken)
+    const parsed = parseBootstrapPayload(response)
+    const remoteMap = new Map<string, RemoteSyncRecord>()
+    parsed.order.forEach((entityType) => {
+      ;(parsed.records[entityType] ?? []).forEach((entry) => {
+        remoteMap.set(
+          createSyncRecordKey(entityType, entry.id),
+          {
+            entityType,
+            recordId: entry.id,
+            payload: entry.payload,
+            createdAt: entry.createdAt,
+            updatedAt: entry.updatedAt,
+            deletedAt: entry.deletedAt,
+            version: entry.version,
+            lastModifiedByDeviceId: entry.lastModifiedByDeviceId
+          }
+        )
+      })
+    })
+
+    const localIndex = buildSyncableStateIndex(this.database.getDomainState())
+    const forcedChanges: PendingSyncChange[] = []
+    const nextManifest = { ...syncState.manifest }
+    let nextCursor = parsed.cursor > (syncState.cursor ?? DEFAULT_CURSOR) ? parsed.cursor : (syncState.cursor ?? DEFAULT_CURSOR)
+
+    localIndex.keyOrder.forEach((key) => {
+      const localRecord = localIndex.records.get(key)
+      if (!localRecord) {
+        return
+      }
+      const localHash = hashPayload(localRecord.payload)
+      const remoteRecord = remoteMap.get(key)
+      if (!remoteRecord) {
+        forcedChanges.push({
+          entityType: localRecord.entityType,
+          recordId: localRecord.recordId,
+          payload: localRecord.payload,
+          deletedAt: null
+        })
+        return
+      }
+
+      if (!remoteRecord.deletedAt) {
+        const remoteHash = hashPayload(remoteRecord.payload)
+        if (remoteHash === localHash) {
+          nextManifest[key] = {
+            entityType: localRecord.entityType,
+            recordId: localRecord.recordId,
+            lastSyncedHash: localHash,
+            remoteVersion: remoteRecord.version,
+            updatedAt: remoteRecord.updatedAt,
+            deletedAt: remoteRecord.deletedAt
+          }
+          return
+        }
+      }
+
+      forcedChanges.push({
+        entityType: localRecord.entityType,
+        recordId: localRecord.recordId,
+        payload: localRecord.payload,
+        deletedAt: null,
+        baseVersion: remoteRecord.version
+      })
+    })
+
+    if (forcedChanges.length === 0) {
+      this.log('Desktop full upload found no additional records', {
+        scannedRecords: localIndex.keyOrder.length
+      })
+      return this.stateStore.write({
+        ...syncState,
+        cursor: nextCursor,
+        bootstrapCompleted: true,
+        manifest: nextManifest
+      })
+    }
+
+    const pushResponse = await this.requestJson(
+      '/api/sync/push',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          deviceId,
+          changes: forcedChanges.map((change) => ({
+            entityType: change.entityType,
+            recordId: change.recordId,
+            payload: change.payload,
+            deletedAt: change.deletedAt,
+            updatedAt: new Date().toISOString(),
+            lastModifiedByDeviceId: deviceId,
+            baseVersion: change.baseVersion
+          }))
+        })
+      },
+      syncState.authToken
+    )
+
+    const parsedPush = parsePushResponse(pushResponse)
+    this.log('Desktop full upload push executed', {
+      scannedRecords: localIndex.keyOrder.length,
+      uploadedRecords: forcedChanges.length,
+      appliedRecords: parsedPush.applied.length,
+      conflicts: parsedPush.conflicts.length
+    })
+    const refreshedIndex = buildSyncableStateIndex(this.database.getDomainState())
+
+    parsedPush.applied.forEach((entry) => {
+      const key = createSyncRecordKey(entry.entityType, entry.recordId)
+      nextManifest[key] = {
+        entityType: entry.entityType,
+        recordId: entry.recordId,
+        lastSyncedHash: mapAppliedHash(refreshedIndex.records.get(key), entry.deletedAt),
+        remoteVersion: entry.version,
+        updatedAt: entry.updatedAt,
+        deletedAt: entry.deletedAt
+      }
+      if (entry.updatedAt > nextCursor) {
+        nextCursor = entry.updatedAt
+      }
+    })
+
+    parsedPush.conflicts.forEach((entry) => {
+      const key = createSyncRecordKey(entry.entityType, entry.recordId)
+      const current = nextManifest[key]
+      nextManifest[key] = {
+        entityType: entry.entityType,
+        recordId: entry.recordId,
+        lastSyncedHash: current?.lastSyncedHash ?? null,
+        remoteVersion: entry.version,
+        updatedAt: entry.updatedAt,
+        deletedAt: entry.deletedAt
+      }
+      if (entry.updatedAt && entry.updatedAt > nextCursor) {
+        nextCursor = entry.updatedAt
+      }
+    })
+
+    if (parsedPush.conflicts.length > 0) {
+      this.log('Desktop full upload conflicts detected', { count: parsedPush.conflicts.length })
+    }
+
+    return this.stateStore.write({
+      ...syncState,
+      cursor: nextCursor,
+      bootstrapCompleted: true,
+      manifest: nextManifest
+    })
+  }
+
+  private async pushLocalChanges(syncState: DesktopSyncStateData, deviceId: string): Promise<DesktopSyncStateData> {
     const pendingChanges = this.collectPendingLocalChanges(this.database.getDomainState(), syncState.manifest)
+    this.log('SYNC PUSH DIRTY CHECK', {
+      pendingChanges: pendingChanges.length,
+      manifestEntries: Object.keys(syncState.manifest).length
+    })
     if (pendingChanges.length === 0) {
-      return
+      return syncState
     }
 
     const response = await this.requestJson(
@@ -633,7 +894,7 @@ export class DesktopSyncManager {
       }
     })
 
-    this.stateStore.write({
+    const nextState = this.stateStore.write({
       ...syncState,
       cursor: nextCursor,
       manifest: nextManifest
@@ -644,6 +905,8 @@ export class DesktopSyncManager {
         count: parsed.conflicts.length
       })
     }
+
+    return nextState
   }
 
   private collectPendingLocalChanges(state: FinanceDomainState, manifest: Record<string, SyncManifestEntry>): PendingSyncChange[] {

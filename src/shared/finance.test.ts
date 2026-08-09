@@ -382,6 +382,90 @@ describe('calculateFinanceSnapshot', () => {
     expect(result.analytics.forecast.affordabilityStatus === 'insufficient').toBe(result.analytics.forecast.projectedMonthEndBalance < 0)
   })
 
+  it('builds a smart spending planner from remaining balance and unpaid commitments', () => {
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = String(now.getMonth() + 1).padStart(2, '0')
+    const currentMonthId = `${year}-${month}`
+
+    const result = calculateFinanceSnapshot({
+      incomes: [
+        {
+          id: 'income-planner',
+          name: 'Salary',
+          groupName: 'Primary',
+          amount: 1000,
+          date: `${currentMonthId}-01`,
+          type: 'fixed',
+          recurring: false,
+          notes: ''
+        }
+      ],
+      expenses: [
+        {
+          id: 'expense-fixed-future',
+          title: 'Rent due later',
+          amount: 300,
+          date: `${currentMonthId}-28`,
+          categoryId: 'housing',
+          paymentMethod: 'bank',
+          type: 'fixed',
+          recurring: false,
+          notes: '',
+          tags: [],
+          goalId: null,
+          debtId: null,
+          allocationKind: 'spend'
+        }
+      ],
+      categories: defaultCategories,
+      goals: [
+        {
+          id: 'goal-planner',
+          name: 'Emergency',
+          type: 'general',
+          targetAmount: 600,
+          currentAmount: 0,
+          targetDate: `${year + 1}-01-01`,
+          priority: 'medium',
+          notes: ''
+        }
+      ],
+      goalContributions: [],
+      debts: [
+        {
+          id: 'debt-planner',
+          name: 'Phone',
+          totalAmount: 1000,
+          installmentAmount: 200,
+          startDate: `${currentMonthId}-10`,
+          endDate: null,
+          desiredPayoffDate: null,
+          paymentFrequency: 'monthly',
+          recurringAutomatically: true,
+          categoryId: 'debt',
+          notes: ''
+        }
+      ],
+      budgetPlans: [{ ...demoBudgetPlan, month: currentMonthId }],
+      settings: { ...englishSettings, includeOptionalGoalsInForecast: true }
+    })
+
+    const planner = result.analytics.smartPlanner
+
+    expect(planner.currentRemainingBalance).toBe(1000)
+    expect(planner.debtInstallmentsDueThisMonth).toBe(200)
+    expect(planner.fixedAndRecurringExpensesStillDueThisMonth).toBe(300)
+    expect(planner.plannedGoalContributionsThisMonth).toBeGreaterThan(0)
+    expect(planner.remainingUsableBalance).toBe(
+      result.analytics.forecast.remainingBalance -
+        result.analytics.forecast.unpaidFixedExpensesDueThisMonth -
+        result.analytics.forecast.installmentsDueThisMonth -
+        result.analytics.forecast.optionalGoalContributionsThisMonth
+    )
+    expect(planner.safeMonthlyFlexibleSpending).toBe(planner.remainingUsableBalance)
+  })
+
   it('survives missing linked relationships without crashing calculations', () => {
     const result = calculateFinanceSnapshot({
       incomes: demoIncomes,

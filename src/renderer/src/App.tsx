@@ -1,12 +1,13 @@
 import { Suspense, lazy, startTransition, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { addMonths, addYears, differenceInCalendarDays, endOfDay, endOfMonth, endOfWeek, endOfYear, isWithinInterval, parseISO, startOfDay, startOfMonth, startOfWeek, startOfYear } from 'date-fns'
+import { addDays, addMonths, addYears, differenceInCalendarDays, endOfDay, endOfMonth, endOfWeek, endOfYear, isWithinInterval, parseISO, startOfDay, startOfMonth, startOfWeek, startOfYear } from 'date-fns'
 import {
   ArrowDownCircle,
   ArrowUpCircle,
   BriefcaseBusiness,
   CalendarRange,
   ChartNoAxesCombined,
+  CircleHelp,
   Gauge,
   Goal,
   Landmark,
@@ -57,6 +58,129 @@ const ReportsScreen = lazy(() => import('./screens/ReportsScreen'))
 type TabKey = 'dashboard' | 'income' | 'expenses' | 'budget' | 'reports' | 'goals' | 'debts' | 'settings'
 type AsyncAction = () => Promise<AppSnapshot>
 type ExpensePeriodFilter = 'today' | 'week' | 'month' | 'previousMonth' | 'previousYear' | 'nextMonth' | 'nextYear'
+type BudgetPeriodFilter = ExpensePeriodFilter | 'year'
+type BudgetPlannerView = {
+  openingAvailableBalance: number
+  expectedIncome: number
+  totalIncomeAvailable: number
+  fixedExpenses: number
+  debtInstallments: number
+  recurringRequiredExpenses: number
+  totalCommitments: number
+  variableSpentToDate: number
+  flexibleSpent: number
+  balanceAfterCommitments: number
+  flexibleBalanceRemaining: number
+  remainingFlexible: number
+  availableToAllocate: number
+  allowedMonthlySpending: number
+  allowedWeeklySpending: number
+  allowedDailySpending: number
+  plannedGoalContributions: number
+  recommendedGoalContributions: number
+  balanceAfterGoals: number
+  allowedMonthlySpendingAfterGoals: number
+  allowedWeeklySpendingAfterGoals: number
+  allowedDailySpendingAfterGoals: number
+  budgetEngineReserveTotal: number
+  remainingDaysInPeriod: number
+  remainingWeeksInPeriod: number
+  goalsIncludedInPlanner: boolean
+  goalsIncludedCount: number
+  goalsExcludedCount: number
+  excludedGoalsNote: boolean
+  shortfallAmount: number
+  status: 'comfortable' | 'tight' | 'risky' | 'not-enough'
+  isPastPeriod: boolean
+}
+
+type ExpensePeriodSummaryView = {
+  totalIncomeForPeriod: number
+  totalExpensesForPeriod: number
+  fixedExpensesForPeriod: number
+  variableExpensesForPeriod: number
+  commitmentsForPeriod: number
+  netForPeriod: number
+  transactionCount: number
+  recurringCount: number
+}
+
+type BudgetCategoryComparisonView = {
+  categoryId: string
+  categoryName: string
+  color: string
+  allocationType: 'required' | 'flexible'
+  recommended: number
+  actual: number
+  difference: number
+  percentUsed: number
+  status: 'paid' | 'remaining' | 'over' | 'healthy' | 'watch' | 'danger' | 'not-available'
+}
+
+type BudgetPageInsights = {
+  summary: ExpensePeriodSummaryView
+  budgetSummary: {
+    periodStart: string
+    periodEnd: string
+    availableBalance: number
+    expectedIncome: number
+    totalAvailableIncome: number
+    fixedExpenses: number
+    debtInstallments: number
+    requiredRecurringExpenses: number
+    totalCommitments: number
+    variableSpentSoFar: number
+    flexibleSpent: number
+    balanceAfterCommitments: number
+    flexibleBalanceRemaining: number
+    remainingFlexible: number
+    budgetEngineReserve: number
+    availableToAllocate: number
+    allowedMonthlySpending: number
+    allowedWeeklySpending: number
+    allowedDailySpending: number
+    remainingDaysInPeriod: number
+    remainingWeeksInPeriod: number
+    plannerStatus: 'comfortable' | 'tight' | 'risky' | 'not-enough'
+    isPastPeriod: boolean
+    status: 'healthy' | 'tight' | 'risky' | 'not-enough'
+  }
+  sustainability: {
+    income: number
+    commitments: number
+    variableSpending: number
+    remainingBalance: number
+    status: 'healthy' | 'tight' | 'risky' | 'not-enough'
+  }
+  comparison: BudgetCategoryComparisonView[]
+  comparisonSummary: {
+    availableIncomeForPeriod: number
+    requiredCommitments: number
+    budgetEngineReserve: number
+    availableToAllocate: number
+    totalRecommended: number
+    totalRequiredPlanned: number
+    totalFlexibleRecommended: number
+    totalActualSpending: number
+    remainingDifference: number
+    hasNoAvailableAmount: boolean
+  }
+  savingsAdvice: {
+    conservativeAmount: number
+    conservativeDaily: number
+    conservativeWeekly: number
+    strongAmount: number
+    strongDaily: number
+    strongWeekly: number
+    categoriesToReduce: Array<{
+      categoryId: string
+      categoryName: string
+      spent: number
+      suggestedReduction: number
+      color?: string
+    }>
+  }
+}
 
 const getExpensePeriodInterval = (filter: ExpensePeriodFilter, referenceDate = new Date()): { start: Date; end: Date } => {
   const today = startOfDay(referenceDate)
@@ -87,12 +211,783 @@ const getExpensePeriodInterval = (filter: ExpensePeriodFilter, referenceDate = n
   }
 }
 
+const getBudgetPeriodInterval = (filter: BudgetPeriodFilter, referenceDate = new Date()): { start: Date; end: Date } => {
+  if (filter === 'year') {
+    const today = startOfDay(referenceDate)
+    return { start: startOfYear(today), end: endOfYear(today) }
+  }
+
+  return getExpensePeriodInterval(filter, referenceDate)
+}
+
 const getExpensePeriodDayCount = (filter: ExpensePeriodFilter): number => {
   if (filter === 'today') return 1
   if (filter === 'week') return 7
   if (filter === 'month') return Math.max(new Date().getDate(), 1)
   const interval = getExpensePeriodInterval(filter)
   return Math.max(differenceInCalendarDays(interval.end, interval.start) + 1, 1)
+}
+
+const round2 = (value: number): number => Math.round(value * 100) / 100
+
+const getBalanceBefore = (snapshot: AppSnapshot, cutoff: Date): number => {
+  const correction = snapshot.settings.balanceCorrection
+  if (correction) {
+    const effectiveDate = parseISO(correction.effectiveDate)
+    if (isValidDateValue(effectiveDate) && effectiveDate < cutoff) {
+      const incomeAfterCorrection = snapshot.incomes
+        .filter((entry) => {
+          const date = parseISO(entry.date)
+          return date > effectiveDate && date < cutoff
+        })
+        .reduce((sum, entry) => sum + entry.amount, 0)
+      const expensesAfterCorrection = snapshot.expenses
+        .filter((entry) => {
+          const date = parseISO(entry.date)
+          return date > effectiveDate && date < cutoff
+        })
+        .reduce((sum, entry) => sum + entry.amount, 0)
+      return round2(correction.correctedBalance + incomeAfterCorrection - expensesAfterCorrection)
+    }
+  }
+  return round2(
+    snapshot.incomes.filter((entry) => parseISO(entry.date) < cutoff).reduce((sum, entry) => sum + entry.amount, 0) -
+      snapshot.expenses.filter((entry) => parseISO(entry.date) < cutoff).reduce((sum, entry) => sum + entry.amount, 0)
+  )
+}
+
+const isValidDateValue = (value: Date): boolean => !Number.isNaN(value.getTime())
+
+const getDaysInMonth = (value: Date): number => Math.max(differenceInCalendarDays(endOfMonth(value), startOfMonth(value)) + 1, 1)
+
+const getInclusiveMonthCount = (start: Date, end: Date): number => {
+  const startIndex = start.getFullYear() * 12 + start.getMonth()
+  const endIndex = end.getFullYear() * 12 + end.getMonth()
+  return Math.max(endIndex - startIndex + 1, 1)
+}
+
+const getGoalContributionForPeriod = (
+  filter: BudgetPeriodFilter,
+  interval: { start: Date; end: Date },
+  targetDate: Date,
+  remainingAmount: number
+): number => {
+  const targetMonth = startOfMonth(targetDate)
+  const anchorMonth = startOfMonth(interval.start)
+  if (targetMonth < anchorMonth || remainingAmount <= 0) {
+    return 0
+  }
+
+  const monthlyContribution = remainingAmount / getInclusiveMonthCount(anchorMonth, targetMonth)
+
+  if (filter === 'today') {
+    return monthlyContribution / getDaysInMonth(interval.start)
+  }
+
+  if (filter === 'week') {
+    return monthlyContribution / Math.max(getDaysInMonth(interval.start) / 7, 1)
+  }
+
+  if (filter === 'month' || filter === 'previousMonth' || filter === 'nextMonth') {
+    return monthlyContribution
+  }
+
+  if (filter === 'year' || filter === 'previousYear' || filter === 'nextYear') {
+    let coveredMonths = 0
+    let cursor = startOfMonth(interval.start)
+    while (cursor <= interval.end) {
+      if (startOfMonth(cursor) <= targetMonth) {
+        coveredMonths += 1
+      }
+      cursor = addMonths(cursor, 1)
+    }
+    return monthlyContribution * coveredMonths
+  }
+
+  return monthlyContribution
+}
+
+const getBudgetEngineReserveForPeriod = (
+  budgetPlan: AppSnapshot['budgetPlans'][number] | undefined,
+  filter: BudgetPeriodFilter,
+  interval: { start: Date; end: Date }
+): number => {
+  if (!budgetPlan) return 0
+
+  const monthlyBase = round2(
+    Math.max(budgetPlan.customSavingsTarget, 0) +
+      Math.max(budgetPlan.customEmergencyTarget, 0) +
+      Math.max(budgetPlan.debtAcceleration, 0)
+  )
+
+  if (monthlyBase <= 0) return 0
+
+  const monthDays = getDaysInMonth(interval.start)
+  if (filter === 'today') {
+    return round2(monthlyBase / monthDays)
+  }
+
+  if (filter === 'week') {
+    return round2(monthlyBase * (Math.max(differenceInCalendarDays(interval.end, interval.start) + 1, 1) / monthDays))
+  }
+
+  if (filter === 'year' || filter === 'previousYear' || filter === 'nextYear') {
+    return round2(monthlyBase * 12)
+  }
+
+  return monthlyBase
+}
+
+const getBudgetPlannerStateForInterval = (
+  snapshot: AppSnapshot,
+  filter: BudgetPeriodFilter,
+  budgetPlan?: AppSnapshot['budgetPlans'][number],
+  referenceDate = new Date()
+): BudgetPlannerView => {
+  const interval = getBudgetPeriodInterval(filter, referenceDate)
+  const today = startOfDay(referenceDate)
+  const periodDays = Math.max(differenceInCalendarDays(interval.end, interval.start) + 1, 1)
+  const isPastPeriod = interval.end < today
+  const isFuturePeriod = interval.start > today
+  const effectiveDate = isPastPeriod ? interval.end : isFuturePeriod ? addDays(interval.start, -1) : today
+  const remainingDaysInPeriod = isPastPeriod ? 0 : isFuturePeriod ? periodDays : Math.max(differenceInCalendarDays(interval.end, today) + 1, 1)
+  const remainingWeeksInPeriod = round2(remainingDaysInPeriod > 0 ? Math.max(remainingDaysInPeriod / 7, 1) : 0)
+
+  const openingAvailableBalance = getBalanceBefore(snapshot, interval.start)
+
+  const actualIncome = round2(
+    snapshot.incomes
+      .filter((entry) => isWithinInterval(parseISO(entry.date), interval))
+      .reduce((sum, entry) => sum + entry.amount, 0)
+  )
+  const projectedRecurringIncome = round2(
+    snapshot.incomes
+      .filter((entry) => entry.recurring)
+      .reduce((sum, entry) => {
+        const baseDate = parseISO(entry.date)
+        if (baseDate > interval.end) return sum
+        let occurrence = new Date(
+          interval.start.getFullYear(),
+          interval.start.getMonth(),
+          Math.min(baseDate.getDate(), new Date(interval.start.getFullYear(), interval.start.getMonth() + 1, 0).getDate())
+        )
+        while (occurrence < baseDate) {
+          occurrence = addMonths(occurrence, 1)
+        }
+        while (occurrence <= interval.end) {
+          const alreadyRecorded = snapshot.incomes.some((income) => {
+            const incomeDate = parseISO(income.date)
+            return (
+              income.name === entry.name &&
+              income.groupName === entry.groupName &&
+              income.amount === entry.amount &&
+              startOfDay(incomeDate).getTime() === startOfDay(occurrence).getTime()
+            )
+          })
+          if (!alreadyRecorded && occurrence >= interval.start) {
+            sum += entry.amount
+          }
+          occurrence = addMonths(occurrence, 1)
+        }
+        return sum
+      }, 0)
+  )
+  const expectedIncome = round2(actualIncome + projectedRecurringIncome)
+  const totalIncomeAvailable = round2(openingAvailableBalance + expectedIncome)
+
+  const categoryById = new Map(snapshot.categories.map((category) => [category.id, category]))
+  const actualFixedExpenses = round2(
+    snapshot.expenses
+      .filter((entry) => {
+        const date = parseISO(entry.date)
+        return isWithinInterval(date, interval) && entry.type === 'fixed' && !entry.debtId
+      })
+      .reduce((sum, entry) => sum + entry.amount, 0)
+  )
+  const actualRecurringRequiredExpenses = round2(
+    snapshot.expenses
+      .filter((entry) => {
+        const date = parseISO(entry.date)
+        const categoryType = categoryById.get(entry.categoryId)?.type
+        return isWithinInterval(date, interval) && entry.recurring && entry.type !== 'fixed' && categoryType === 'essential' && !entry.debtId
+      })
+      .reduce((sum, entry) => sum + entry.amount, 0)
+  )
+  const projectedRecurringExpenses = snapshot.expenses
+    .filter((entry) => entry.recurring && !entry.debtId)
+    .reduce(
+      (totals, entry) => {
+        const baseDate = parseISO(entry.date)
+        if (baseDate > interval.end) return totals
+        let occurrence = new Date(
+          interval.start.getFullYear(),
+          interval.start.getMonth(),
+          Math.min(baseDate.getDate(), new Date(interval.start.getFullYear(), interval.start.getMonth() + 1, 0).getDate())
+        )
+        while (occurrence < baseDate) {
+          occurrence = addMonths(occurrence, 1)
+        }
+        while (occurrence <= interval.end) {
+          const alreadyRecorded = snapshot.expenses.some((expense) => {
+            const expenseDate = parseISO(expense.date)
+            return (
+              expense.title === entry.title &&
+              expense.amount === entry.amount &&
+              expense.categoryId === entry.categoryId &&
+              startOfDay(expenseDate).getTime() === startOfDay(occurrence).getTime()
+            )
+          })
+          if (!alreadyRecorded && occurrence >= interval.start) {
+            const categoryType = categoryById.get(entry.categoryId)?.type
+            if (entry.type === 'fixed') {
+              totals.fixed += entry.amount
+            } else if (categoryType === 'essential') {
+              totals.recurringRequired += entry.amount
+            }
+          }
+          occurrence = addMonths(occurrence, 1)
+        }
+        return totals
+      },
+      { fixed: 0, recurringRequired: 0 }
+    )
+  const fixedExpenses = round2(actualFixedExpenses + projectedRecurringExpenses.fixed)
+  const recurringRequiredExpenses = round2(actualRecurringRequiredExpenses + projectedRecurringExpenses.recurringRequired)
+
+  const debtInstallments = round2(
+    snapshot.debts.reduce((sum, debt) => {
+      if (isPastPeriod) {
+        return (
+          sum +
+          snapshot.expenses
+            .filter((entry) => entry.debtId === debt.id && isWithinInterval(parseISO(entry.date), interval))
+            .reduce((paid, entry) => paid + entry.amount, 0)
+        )
+      }
+
+      const paymentsBeforePeriod = snapshot.expenses
+        .filter((entry) => entry.debtId === debt.id && parseISO(entry.date) < interval.start)
+        .reduce((paid, entry) => paid + entry.amount, 0)
+      const paidInSelectedPeriodToDate = snapshot.expenses
+        .filter((entry) => {
+          const date = parseISO(entry.date)
+          return entry.debtId === debt.id && isWithinInterval(date, interval) && date <= effectiveDate
+        })
+        .reduce((paid, entry) => paid + entry.amount, 0)
+
+      let remainingDebt = Math.max(debt.totalAmount - paymentsBeforePeriod, 0)
+      let scheduledDate = parseISO(debt.startDate)
+      let dueInPeriod = 0
+
+      while (remainingDebt > 0 && scheduledDate <= interval.end) {
+        const installment = round2(Math.min(Math.max(debt.installmentAmount, 0), remainingDebt))
+        if (scheduledDate >= interval.start && installment > 0) {
+          dueInPeriod += installment
+        }
+        remainingDebt = Math.max(remainingDebt - installment, 0)
+        scheduledDate = debt.paymentFrequency === 'weekly' ? addDays(scheduledDate, 7) : addMonths(scheduledDate, 1)
+      }
+
+      return sum + Math.max(round2(dueInPeriod) - round2(paidInSelectedPeriodToDate), 0)
+    }, 0)
+  )
+
+  const totalGoalContributedToDate = new Map<string, number>()
+  snapshot.expenses
+    .filter((entry) => entry.goalId && entry.allocationKind === 'goal-contribution')
+    .forEach((entry) => {
+      totalGoalContributedToDate.set(entry.goalId as string, (totalGoalContributedToDate.get(entry.goalId as string) ?? 0) + entry.amount)
+    })
+  snapshot.goalContributions.forEach((entry) => {
+    totalGoalContributedToDate.set(entry.goalId, (totalGoalContributedToDate.get(entry.goalId) ?? 0) + entry.amount)
+  })
+
+  const periodGoalContributedToDate = new Map<string, number>()
+  snapshot.expenses
+    .filter((entry) => {
+      const date = parseISO(entry.date)
+      return entry.goalId && entry.allocationKind === 'goal-contribution' && isWithinInterval(date, interval) && date <= effectiveDate
+    })
+    .forEach((entry) => {
+      periodGoalContributedToDate.set(entry.goalId as string, (periodGoalContributedToDate.get(entry.goalId as string) ?? 0) + entry.amount)
+    })
+  snapshot.goalContributions
+    .filter((entry) => {
+      const date = parseISO(entry.date)
+      return isWithinInterval(date, interval) && date <= effectiveDate
+    })
+    .forEach((entry) => {
+      periodGoalContributedToDate.set(entry.goalId, (periodGoalContributedToDate.get(entry.goalId) ?? 0) + entry.amount)
+    })
+
+  let recommendedGoalContributionsRaw = 0
+  let plannedGoalContributionsRaw = 0
+  let goalsIncludedCount = 0
+  let goalsExcludedCount = 0
+
+  snapshot.goals.forEach((goal) => {
+    const saved = goal.currentAmount + (totalGoalContributedToDate.get(goal.id) ?? 0)
+    const remainingAmount = Math.max(goal.targetAmount - saved, 0)
+    if (remainingAmount <= 0) {
+      return
+    }
+
+    const targetDate = parseISO(goal.targetDate)
+    if (!isValidDateValue(targetDate)) {
+      goalsExcludedCount += 1
+      return
+    }
+
+    const recommendedForPeriod = round2(getGoalContributionForPeriod(filter, interval, targetDate, remainingAmount))
+    if (recommendedForPeriod <= 0 && !isPastPeriod) {
+      goalsExcludedCount += 1
+      return
+    }
+
+    goalsIncludedCount += 1
+    recommendedGoalContributionsRaw += recommendedForPeriod
+
+    if (snapshot.settings.includeOptionalGoalsInForecast) {
+      plannedGoalContributionsRaw += isPastPeriod ? periodGoalContributedToDate.get(goal.id) ?? 0 : recommendedForPeriod
+    }
+  })
+
+  const recommendedGoalContributions = round2(recommendedGoalContributionsRaw)
+  const plannedGoalContributions = round2(plannedGoalContributionsRaw)
+
+  const totalCommitments = round2(fixedExpenses + debtInstallments + recurringRequiredExpenses)
+  const balanceAfterCommitments = round2(totalIncomeAvailable - totalCommitments)
+  const budgetEngineReserveTotal = 0
+  const variableSpentToDate = round2(
+    snapshot.expenses
+      .filter((entry) => {
+        const date = parseISO(entry.date)
+        return (
+          isWithinInterval(date, interval) &&
+          date <= effectiveDate &&
+          entry.type === 'variable' &&
+          entry.allocationKind !== 'goal-contribution' &&
+          !entry.debtId
+        )
+      })
+      .reduce((sum, entry) => sum + entry.amount, 0)
+  )
+  console.info('RECALCULATING WITH VALUES:', {
+    filter,
+    totalIncomeAvailable,
+    totalCommitments,
+    availableToAllocate: Math.max(balanceAfterCommitments, 0)
+  })
+  const availableToAllocate = round2(Math.max(balanceAfterCommitments, 0))
+  const flexibleBalanceRemaining = round2(availableToAllocate - variableSpentToDate)
+  const allowedMonthlySpending = round2(flexibleBalanceRemaining - budgetEngineReserveTotal)
+  const allowedDailySpending = remainingDaysInPeriod > 0 ? round2(allowedMonthlySpending / remainingDaysInPeriod) : 0
+  const allowedWeeklySpending = remainingWeeksInPeriod > 0 ? round2(allowedMonthlySpending / remainingWeeksInPeriod) : 0
+  const balanceAfterGoals = round2(allowedMonthlySpending)
+  const allowedDailySpendingAfterGoals = allowedDailySpending
+  const allowedWeeklySpendingAfterGoals = allowedWeeklySpending
+
+  const averageDailyVariableSpend = round2(
+    variableSpentToDate /
+      Math.max(
+        isFuturePeriod ? periodDays : Math.max(differenceInCalendarDays(effectiveDate, interval.start) + 1, 1),
+        1
+      )
+  )
+  let status: BudgetPlannerView['status'] = 'comfortable'
+  if (allowedMonthlySpending < 0) {
+    status = 'not-enough'
+  } else if (allowedDailySpending <= 0 || allowedDailySpending < averageDailyVariableSpend * 1.05) {
+    status = 'tight'
+  }
+
+  return {
+    openingAvailableBalance,
+    expectedIncome,
+    totalIncomeAvailable,
+    fixedExpenses,
+    debtInstallments,
+    recurringRequiredExpenses,
+    totalCommitments,
+    variableSpentToDate,
+    flexibleSpent: variableSpentToDate,
+    balanceAfterCommitments,
+    flexibleBalanceRemaining,
+    remainingFlexible: flexibleBalanceRemaining,
+    availableToAllocate,
+    allowedMonthlySpending,
+    allowedWeeklySpending,
+    allowedDailySpending,
+    plannedGoalContributions,
+    recommendedGoalContributions,
+    balanceAfterGoals,
+    allowedMonthlySpendingAfterGoals: balanceAfterGoals,
+    allowedWeeklySpendingAfterGoals,
+    allowedDailySpendingAfterGoals,
+    budgetEngineReserveTotal,
+    remainingDaysInPeriod,
+    remainingWeeksInPeriod,
+    goalsIncludedInPlanner: snapshot.settings.includeOptionalGoalsInForecast,
+    goalsIncludedCount,
+    goalsExcludedCount,
+    excludedGoalsNote: goalsExcludedCount > 0,
+    shortfallAmount: round2(Math.max(-allowedMonthlySpending, 0)),
+    status,
+    isPastPeriod
+  }
+}
+
+const getExpensePeriodSummary = (
+  snapshot: AppSnapshot,
+  filter: ExpensePeriodFilter | BudgetPeriodFilter,
+  budgetPlan?: AppSnapshot['budgetPlans'][number],
+  referenceDate = new Date()
+): ExpensePeriodSummaryView => {
+  const interval = filter === 'year' ? getBudgetPeriodInterval(filter, referenceDate) : getExpensePeriodInterval(filter, referenceDate)
+  const planner = getBudgetPlannerStateForInterval(snapshot, filter === 'year' ? filter : filter, budgetPlan, referenceDate)
+  const periodExpenses = snapshot.expenses.filter((entry) => isWithinInterval(parseISO(entry.date), interval))
+
+  const actualIncome = round2(
+    snapshot.incomes
+      .filter((entry) => isWithinInterval(parseISO(entry.date), interval))
+      .reduce((sum, entry) => sum + entry.amount, 0)
+  )
+  const projectedRecurringIncome = round2(
+    snapshot.incomes
+      .filter((entry) => entry.recurring)
+      .reduce((sum, entry) => {
+        const baseDate = parseISO(entry.date)
+        if (baseDate > interval.end) return sum
+        let occurrence = new Date(
+          interval.start.getFullYear(),
+          interval.start.getMonth(),
+          Math.min(baseDate.getDate(), new Date(interval.start.getFullYear(), interval.start.getMonth() + 1, 0).getDate())
+        )
+        while (occurrence < baseDate) {
+          occurrence = addMonths(occurrence, 1)
+        }
+        while (occurrence <= interval.end) {
+          const alreadyRecorded = snapshot.incomes.some((income) => {
+            const incomeDate = parseISO(income.date)
+            return (
+              income.name === entry.name &&
+              income.groupName === entry.groupName &&
+              income.amount === entry.amount &&
+              startOfDay(incomeDate).getTime() === startOfDay(occurrence).getTime()
+            )
+          })
+          if (!alreadyRecorded && occurrence >= interval.start) {
+            sum += entry.amount
+          }
+          occurrence = addMonths(occurrence, 1)
+        }
+        return sum
+      }, 0)
+  )
+  const totalIncomeForPeriod = round2(actualIncome + projectedRecurringIncome)
+  const totalExpensesForPeriod = round2(
+    periodExpenses.reduce((sum, entry) => sum + entry.amount, 0)
+  )
+  const fixedExpensesForPeriod = round2(
+    periodExpenses
+      .filter((entry) => entry.type === 'fixed')
+      .reduce((sum, entry) => sum + entry.amount, 0)
+  )
+  const variableExpensesForPeriod = round2(
+    periodExpenses
+      .filter((entry) => entry.type === 'variable')
+      .reduce((sum, entry) => sum + entry.amount, 0)
+  )
+
+  return {
+    totalIncomeForPeriod,
+    totalExpensesForPeriod,
+    fixedExpensesForPeriod,
+    variableExpensesForPeriod,
+    commitmentsForPeriod: planner.totalCommitments,
+    netForPeriod: round2(totalIncomeForPeriod - totalExpensesForPeriod),
+    transactionCount: periodExpenses.length,
+    recurringCount: periodExpenses.filter((entry) => entry.recurring).length
+  }
+}
+
+const getBudgetPageInsights = (
+  snapshot: AppSnapshot,
+  budgetPlan: AppSnapshot['budgetPlans'][number] | undefined,
+  filter: BudgetPeriodFilter,
+  referenceDate = new Date()
+): BudgetPageInsights => {
+  const interval = getBudgetPeriodInterval(filter, referenceDate)
+  const planner = getBudgetPlannerStateForInterval(snapshot, filter, budgetPlan, referenceDate)
+  const summary = getExpensePeriodSummary(snapshot, filter, budgetPlan, referenceDate)
+  const periodDays = Math.max(differenceInCalendarDays(interval.end, interval.start) + 1, 1)
+  const periodWeeks = Math.max(periodDays / 7, 1)
+  const categoryById = new Map(snapshot.categories.map((category) => [category.id, category]))
+  const actualByCategory = new Map<string, number>()
+  const requiredByCategory = new Map<string, number>()
+
+  snapshot.expenses
+    .filter((entry) => isWithinInterval(parseISO(entry.date), interval))
+    .forEach((entry) => {
+      actualByCategory.set(entry.categoryId, (actualByCategory.get(entry.categoryId) ?? 0) + entry.amount)
+      const categoryType = categoryById.get(entry.categoryId)?.type
+      if (entry.type === 'fixed' || (entry.recurring && categoryType === 'essential' && !entry.debtId)) {
+        requiredByCategory.set(entry.categoryId, round2((requiredByCategory.get(entry.categoryId) ?? 0) + entry.amount))
+      }
+    })
+
+  snapshot.expenses
+    .filter((entry) => entry.recurring && !entry.debtId)
+    .forEach((entry) => {
+      const baseDate = parseISO(entry.date)
+      if (baseDate > interval.end) return
+      let occurrence = new Date(
+        interval.start.getFullYear(),
+        interval.start.getMonth(),
+        Math.min(baseDate.getDate(), new Date(interval.start.getFullYear(), interval.start.getMonth() + 1, 0).getDate())
+      )
+      while (occurrence < baseDate) {
+        occurrence = addMonths(occurrence, 1)
+      }
+      while (occurrence <= interval.end) {
+        const alreadyRecorded = snapshot.expenses.some((expense) => {
+          const expenseDate = parseISO(expense.date)
+          return (
+            expense.title === entry.title &&
+            expense.amount === entry.amount &&
+            expense.categoryId === entry.categoryId &&
+            startOfDay(expenseDate).getTime() === startOfDay(occurrence).getTime()
+          )
+        })
+        if (!alreadyRecorded && occurrence >= interval.start) {
+          const categoryType = categoryById.get(entry.categoryId)?.type
+          if (entry.type === 'fixed' || categoryType === 'essential') {
+            requiredByCategory.set(entry.categoryId, round2((requiredByCategory.get(entry.categoryId) ?? 0) + entry.amount))
+          }
+        }
+        occurrence = addMonths(occurrence, 1)
+      }
+    })
+
+  const percentagesByType: Record<BudgetMethod, Record<Category['type'], number>> = {
+    'fifty-thirty-twenty': { essential: 50, lifestyle: 30, saving: 15, debt: 5, custom: 5 },
+    'zero-based': { essential: 52, lifestyle: 18, saving: 18, debt: 12, custom: 5 },
+    'custom-percentage': { essential: 45, lifestyle: 20, saving: 20, debt: 10, custom: 5 },
+    'priority-based': { essential: 48, lifestyle: 17, saving: 20, debt: 15, custom: 5 },
+    'goal-first': { essential: 45, lifestyle: 15, saving: 25, debt: 15, custom: 5 },
+    'debt-focused': { essential: 44, lifestyle: 12, saving: 14, debt: 25, custom: 5 }
+  }
+
+  const method = budgetPlan?.method ?? snapshot.settings.defaultBudgetMethod
+  const availableForCategoryBudget = round2(
+    Math.max(planner.availableToAllocate, 0)
+  )
+  const typeBudgets = percentagesByType[method]
+  snapshot.debts.forEach((debt) => {
+    const categoryId = debt.categoryId
+    if (!categoryId) return
+    const debtExpensesBeforePeriod = snapshot.expenses
+      .filter((entry) => entry.debtId === debt.id && parseISO(entry.date) < interval.start)
+      .reduce((sum, entry) => sum + entry.amount, 0)
+    let remainingDebt = Math.max(debt.totalAmount - debtExpensesBeforePeriod, 0)
+    let scheduledDate = parseISO(debt.startDate)
+    let dueInPeriod = 0
+    while (remainingDebt > 0 && scheduledDate <= interval.end) {
+      const installment = round2(Math.min(Math.max(debt.installmentAmount, 0), remainingDebt))
+      if (scheduledDate >= interval.start && installment > 0) {
+        dueInPeriod += installment
+      }
+      remainingDebt = Math.max(remainingDebt - installment, 0)
+      scheduledDate = debt.paymentFrequency === 'weekly' ? addDays(scheduledDate, 7) : addMonths(scheduledDate, 1)
+    }
+    const requiredDebtAmount = planner.isPastPeriod
+      ? round2(dueInPeriod)
+      : round2(dueInPeriod)
+
+    if (requiredDebtAmount > 0) {
+      requiredByCategory.set(categoryId, round2((requiredByCategory.get(categoryId) ?? 0) + requiredDebtAmount))
+    }
+  })
+
+  const committedCategoryIds = new Set([...requiredByCategory.keys()])
+
+  const eligibleCategories = snapshot.categories.filter((category) => {
+    if (category.type === 'debt' || category.type === 'saving') return false
+    if (committedCategoryIds.has(category.id)) return false
+    return true
+  })
+
+  const weightByCategory = new Map<string, number>()
+  eligibleCategories.forEach((category) => {
+    const actual = round2(actualByCategory.get(category.id) ?? 0)
+    const rule = budgetPlan?.rules.find((entry) => entry.categoryId === category.id)
+    let weight = 0
+
+    if (budgetPlan && method === 'custom-percentage' && (rule?.percentage ?? 0) > 0) {
+      weight = rule?.percentage ?? 0
+    } else if (budgetPlan && method === 'priority-based' && (rule?.priorityWeight ?? 0) > 0) {
+      weight = rule?.priorityWeight ?? 0
+    } else if (actual > 0) {
+      weight = actual
+    } else {
+      weight = typeBudgets[category.type] ?? 1
+    }
+
+    weightByCategory.set(category.id, Math.max(weight, 0.01))
+  })
+  const totalEligibleWeights = Math.max([...weightByCategory.values()].reduce((sum, value) => sum + value, 0), 1)
+
+  const recommendedFlexibleByCategory = new Map<string, number>()
+  if (availableForCategoryBudget > 0 && eligibleCategories.length > 0) {
+    let remainingPool = availableForCategoryBudget
+    let remainingWeight = totalEligibleWeights
+    eligibleCategories.forEach((category, index) => {
+      const weight = weightByCategory.get(category.id) ?? 0
+      const isLast = index === eligibleCategories.length - 1
+      const allocation = isLast
+        ? round2(Math.max(remainingPool, 0))
+        : round2(Math.max((remainingPool * weight) / Math.max(remainingWeight, 0.01), 0))
+      const safeAllocation = round2(Math.min(allocation, remainingPool))
+      recommendedFlexibleByCategory.set(category.id, safeAllocation)
+      remainingPool = round2(Math.max(remainingPool - safeAllocation, 0))
+      remainingWeight = Math.max(remainingWeight - weight, 0.01)
+    })
+  }
+
+  const comparison = snapshot.categories.map((category) => {
+    const actual = round2(actualByCategory.get(category.id) ?? 0)
+    const requiredAmount = round2(requiredByCategory.get(category.id) ?? 0)
+    const isRequired = requiredAmount > 0 || category.type === 'debt'
+    const allocationType: BudgetCategoryComparisonView['allocationType'] = isRequired ? 'required' : 'flexible'
+    const finalRecommended = round2(
+      isRequired ? requiredAmount : recommendedFlexibleByCategory.get(category.id) ?? 0
+    )
+    const percentUsed = finalRecommended <= 0 ? 0 : round2((actual / finalRecommended) * 100)
+    const status: BudgetCategoryComparisonView['status'] = isRequired
+      ? actual > finalRecommended
+        ? 'over'
+        : actual < finalRecommended
+          ? 'remaining'
+          : 'paid'
+      : availableForCategoryBudget <= 0
+        ? 'not-available'
+        : percentUsed > 110
+          ? 'danger'
+          : percentUsed > 90
+            ? 'watch'
+            : 'healthy'
+
+    return {
+      categoryId: category.id,
+      categoryName: translateCategoryName(category, snapshot.settings.language),
+      color: category.color,
+      allocationType,
+      recommended: finalRecommended,
+      actual,
+      difference: round2(finalRecommended - actual),
+      percentUsed,
+      status
+    }
+  }).sort((left, right) => {
+    if (left.allocationType !== right.allocationType) {
+      return left.allocationType === 'required' ? -1 : 1
+    }
+    return right.recommended - left.recommended
+  })
+  const totalRecommended = round2(comparison.reduce((sum, item) => sum + item.recommended, 0))
+  const totalRequiredPlanned = round2(comparison.filter((item) => item.allocationType === 'required').reduce((sum, item) => sum + item.recommended, 0))
+  const totalFlexibleRecommended = round2(comparison.filter((item) => item.allocationType === 'flexible').reduce((sum, item) => sum + item.recommended, 0))
+  const totalActualSpending = round2(comparison.reduce((sum, item) => sum + item.actual, 0))
+
+  const savingsBase = Math.max(planner.flexibleBalanceRemaining, 0)
+  const adviceDays = Math.max(planner.remainingDaysInPeriod || periodDays, 1)
+  const adviceWeeks = Math.max(planner.remainingWeeksInPeriod || periodWeeks, 1)
+  const nonEssentialCategories = comparison
+    .filter((item) => {
+      const categoryType = categoryById.get(item.categoryId)?.type
+      return categoryType === 'lifestyle' || categoryType === 'custom'
+    })
+    .filter((item) => item.actual > 0)
+    .sort((left, right) => right.actual - left.actual)
+    .slice(0, 3)
+    .map((item) => ({
+      categoryId: item.categoryId,
+      categoryName: item.categoryName,
+      spent: item.actual,
+      suggestedReduction: round2(item.actual * 0.1),
+      color: item.color
+    }))
+
+  const sustainabilityStatus: BudgetPageInsights['sustainability']['status'] =
+    planner.allowedMonthlySpending < 0
+      ? 'not-enough'
+      : planner.status === 'comfortable'
+        ? 'healthy'
+        : planner.status === 'tight'
+          ? 'tight'
+          : 'risky'
+
+  return {
+    summary: {
+      ...summary,
+      totalIncomeForPeriod: planner.totalIncomeAvailable
+    },
+    budgetSummary: {
+      periodStart: interval.start.toISOString(),
+      periodEnd: interval.end.toISOString(),
+      availableBalance: planner.openingAvailableBalance,
+      expectedIncome: planner.expectedIncome,
+      totalAvailableIncome: planner.totalIncomeAvailable,
+      fixedExpenses: planner.fixedExpenses,
+      debtInstallments: planner.debtInstallments,
+      requiredRecurringExpenses: planner.recurringRequiredExpenses,
+      totalCommitments: planner.totalCommitments,
+      variableSpentSoFar: planner.variableSpentToDate,
+      flexibleSpent: planner.flexibleSpent,
+      balanceAfterCommitments: planner.balanceAfterCommitments,
+      flexibleBalanceRemaining: planner.flexibleBalanceRemaining,
+      remainingFlexible: planner.remainingFlexible,
+      budgetEngineReserve: planner.budgetEngineReserveTotal,
+      availableToAllocate: planner.availableToAllocate,
+      allowedMonthlySpending: planner.allowedMonthlySpending,
+      allowedWeeklySpending: planner.allowedWeeklySpending,
+      allowedDailySpending: planner.allowedDailySpending,
+      remainingDaysInPeriod: planner.remainingDaysInPeriod,
+      remainingWeeksInPeriod: planner.remainingWeeksInPeriod,
+      plannerStatus: planner.status,
+      isPastPeriod: planner.isPastPeriod,
+      status: sustainabilityStatus
+    },
+    sustainability: {
+      income: planner.totalIncomeAvailable,
+      commitments: planner.totalCommitments,
+      variableSpending: planner.variableSpentToDate,
+      remainingBalance: planner.flexibleBalanceRemaining,
+      status: sustainabilityStatus
+    },
+    comparison,
+    comparisonSummary: {
+      availableIncomeForPeriod: planner.totalIncomeAvailable,
+      requiredCommitments: planner.totalCommitments,
+      budgetEngineReserve: planner.budgetEngineReserveTotal,
+      availableToAllocate: availableForCategoryBudget,
+      totalRecommended,
+      totalRequiredPlanned,
+      totalFlexibleRecommended,
+      totalActualSpending,
+      remainingDifference: round2(availableForCategoryBudget - totalFlexibleRecommended),
+      hasNoAvailableAmount: availableForCategoryBudget <= 0
+    },
+    savingsAdvice: {
+      conservativeAmount: round2(savingsBase * 0.1),
+      conservativeDaily: round2((savingsBase * 0.1) / adviceDays),
+      conservativeWeekly: round2((savingsBase * 0.1) / adviceWeeks),
+      strongAmount: round2(savingsBase * 0.2),
+      strongDaily: round2((savingsBase * 0.2) / adviceDays),
+      strongWeekly: round2((savingsBase * 0.2) / adviceWeeks),
+      categoriesToReduce: nonEssentialCategories
+    }
+  }
 }
 
 const navItems = (text: ReturnType<typeof getUiText>): Array<{ key: TabKey; label: string; icon: typeof Gauge }> => [
@@ -188,6 +1083,36 @@ function createDebtForm(input?: Partial<SaveDebtInput>): SaveDebtInput {
   }
 }
 
+function HelpButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" className="help-icon-button" onClick={onClick} aria-label={label}>
+      <CircleHelp size={14} />
+    </button>
+  )
+}
+
+function ExplainedMetricLine({
+  label,
+  value,
+  help,
+  onHelp
+}: {
+  label: string
+  value: string
+  help: string
+  onHelp: (title: string, body: string) => void
+}) {
+  return (
+    <div className="metric-line">
+      <span className="metric-label-with-help">
+        {label}
+        <HelpButton label={label} onClick={() => onHelp(label, help)} />
+      </span>
+      <strong>{value}</strong>
+    </div>
+  )
+}
+
 export function App() {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null)
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard')
@@ -197,6 +1122,7 @@ export function App() {
   const [startupError, setStartupError] = useState<Error | null>(null)
   const [expenseSearch, setExpenseSearch] = useState('')
   const [expensePeriodFilter, setExpensePeriodFilter] = useState<ExpensePeriodFilter>('month')
+  const [budgetPeriodFilter, setBudgetPeriodFilter] = useState<BudgetPeriodFilter>('month')
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null)
   const [pendingGoalLinkExpense, setPendingGoalLinkExpense] = useState<SaveExpenseInput | null>(null)
   const [goalLinkPromptGoalId, setGoalLinkPromptGoalId] = useState('')
@@ -204,7 +1130,11 @@ export function App() {
   const [categoryDeletionMode, setCategoryDeletionMode] = useState<DeleteCategoryInput['mode']>('fallback')
   const [categoryDeletionTargetId, setCategoryDeletionTargetId] = useState('')
   const [resetDialogOpen, setResetDialogOpen] = useState(false)
+  const [fullUploadDialogOpen, setFullUploadDialogOpen] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatusSnapshot | null>(null)
+  const [helpDialog, setHelpDialog] = useState<{ title: string; body: string } | null>(null)
+  const [balanceAdjustmentValue, setBalanceAdjustmentValue] = useState('')
+  const [balanceAdjustmentNote, setBalanceAdjustmentNote] = useState('')
 
   const [incomeForm, setIncomeForm] = useState<SaveIncomeInput>(createIncomeForm())
   const [expenseForm, setExpenseForm] = useState<SaveExpenseInput>(createExpenseForm())
@@ -245,6 +1175,7 @@ export function App() {
   }, [])
 
   const bridge = window.moneywise
+  const syncBridge = window.syncApi
   const settings = snapshot?.settings
   const language = settings?.language ?? 'ar'
   const text = useMemo(() => getUiText(language), [language])
@@ -263,6 +1194,12 @@ export function App() {
       try {
         const status = await bridge.getSyncStatus()
         if (!disposed) {
+          console.info('[renderer] SYNC STATUS RECEIVED', {
+            enabled: status.enabled,
+            paused: status.paused,
+            connection: status.backendReachable,
+            account: status.accountEmail
+          })
           setSyncStatus(status)
         }
       } catch (error) {
@@ -275,7 +1212,7 @@ export function App() {
     void loadSyncStatus()
     const timer = window.setInterval(() => {
       void loadSyncStatus()
-    }, 15000)
+    }, 7000)
     return () => {
       disposed = true
       window.clearInterval(timer)
@@ -343,6 +1280,18 @@ export function App() {
   const expensePeriodTotal = filteredExpenses.reduce((sum, entry) => sum + entry.amount, 0)
   const expensePeriodAverageDaily = expensePeriodFilter === 'today' ? expensePeriodTotal : expensePeriodTotal / Math.max(expensePeriodDays, 1)
   const isFutureExpensePeriod = expensePeriodFilter === 'nextMonth' || expensePeriodFilter === 'nextYear'
+  const budgetPlanner = useMemo(() => {
+    if (!snapshot) return null
+    return getBudgetPlannerStateForInterval(snapshot, budgetPeriodFilter, currentBudgetPlan ?? undefined)
+  }, [budgetPeriodFilter, currentBudgetPlan, snapshot])
+  const budgetPageInsights = useMemo(() => {
+    if (!snapshot) return null
+    return getBudgetPageInsights(snapshot, currentBudgetPlan ?? undefined, budgetPeriodFilter)
+  }, [budgetPeriodFilter, currentBudgetPlan, snapshot])
+  const expensePeriodSummary = useMemo(() => {
+    if (!snapshot) return null
+    return getExpensePeriodSummary(snapshot, expensePeriodFilter, currentBudgetPlan ?? undefined)
+  }, [expensePeriodFilter, currentBudgetPlan, snapshot])
   const expensePeriodChart = useMemo(() => {
     const totals = new Map<string, number>()
     filteredExpenses.forEach((expense) => {
@@ -362,6 +1311,85 @@ export function App() {
       .slice(0, 6)
   }, [filteredExpenses, language, snapshot?.categories])
   const expensePeriodLabel = expensePeriodOptions.find((entry) => entry.value === expensePeriodFilter)?.label ?? text.expenses.monthFilter
+  const budgetPeriodOptions: Array<{ label: string; value: BudgetPeriodFilter }> = [
+    { label: text.expenses.todayFilter, value: 'today' },
+    { label: text.expenses.weekFilter, value: 'week' },
+    { label: text.expenses.monthFilter, value: 'month' },
+    { label: text.budget.thisYearFilter, value: 'year' },
+    { label: text.expenses.previousMonthFilter, value: 'previousMonth' },
+    { label: text.expenses.previousYearFilter, value: 'previousYear' },
+    { label: text.expenses.nextMonthFilter, value: 'nextMonth' },
+    { label: text.expenses.nextYearFilter, value: 'nextYear' }
+  ]
+  const budgetPlannerPeriodLabel = budgetPeriodOptions.find((entry) => entry.value === budgetPeriodFilter)?.label ?? text.expenses.monthFilter
+  const balanceCopy =
+    language === 'ar'
+      ? {
+          editCurrentBalance: 'تعديل الرصيد الحالي',
+          currentAvailableBalance: 'الرصيد الحالي المتاح',
+          newBalance: 'الرصيد الجديد',
+          adjustmentReason: 'سبب التعديل',
+          saveAdjustment: 'حفظ تعديل الرصيد',
+          lastAdjustment: 'آخر تعديل يدوي',
+          noAdjustment: 'لا يوجد تعديل يدوي محفوظ',
+          notePlaceholder: 'سبب اختياري للتعديل',
+          amountError: 'أدخل رصيدًا صحيحًا',
+          adjustedOn: 'تاريخ التعديل'
+        }
+      : {
+          editCurrentBalance: 'Edit current balance',
+          currentAvailableBalance: 'Current available balance',
+          newBalance: 'New balance',
+          adjustmentReason: 'Adjustment reason',
+          saveAdjustment: 'Save balance adjustment',
+          lastAdjustment: 'Last manual adjustment',
+          noAdjustment: 'No manual adjustment saved',
+          notePlaceholder: 'Optional reason for the adjustment',
+          amountError: 'Enter a valid balance',
+          adjustedOn: 'Adjustment date'
+        }
+  const helpCopy =
+    language === 'ar'
+      ? {
+          availableBalance:
+            `المعنى: الرصيد المتاح للفترة المحددة.\nالصيغة: الرصيد المتاح = الرصيد المرحّل من الفترات السابقة + آخر تعديل يدوي إن وجد.\nمصادر البيانات: الدخل السابق، المصاريف السابقة، وآخر تعديل يدوي محفوظ في الإعدادات.\nالفترة المحددة: ${budgetPlannerPeriodLabel}.\nيشمل: الرصيد المرحّل والتعديل اليدوي. لا يشمل دخل أو إنفاق الفترة نفسها في هذا السطر.`,
+          expectedIncome:
+            `المعنى: الدخل المتوقع داخل الفترة المحددة.\nالصيغة: دخل الفترة = الدخل المسجل داخل الفترة + الدخل المتكرر المتوقع غير المسجل بعد.\nمصادر البيانات: سجلات الدخل والدخل المتكرر.\nالفترة المحددة: ${budgetPlannerPeriodLabel}.`,
+          totalAvailable:
+            `المعنى: إجمالي المال المتاح قبل الالتزامات.\nالصيغة: إجمالي المال المتاح = الرصيد المرحّل + دخل الفترة.\nمصادر البيانات: الدخل، المصاريف السابقة، الدخل المتكرر، والتعديل اليدوي إن وجد.\nالفترة المحددة: ${budgetPlannerPeriodLabel}.`,
+          fixedSpending:
+            `المعنى: مجموع المصاريف المسجلة كـ "ثابت" داخل الفترة المحددة فقط.\nالصيغة: المصاريف الثابتة = مجموع المصاريف الثابتة بتاريخ داخل الفترة.\nمصادر البيانات: سجلات المصاريف المرئية بعد فلتر الفترة.\nالفترة المحددة: ${expensePeriodLabel}.\nيشمل: المصاريف الثابتة الفعلية فقط. لا يشمل التوقعات.`,
+          totalSpending:
+            `المعنى: إجمالي الإنفاق الفعلي داخل الفترة المحددة.\nالصيغة: إجمالي الإنفاق = مجموع كل المصاريف بتاريخ داخل الفترة.\nمصادر البيانات: سجلات المصاريف المرئية بعد فلتر الفترة.\nالفترة المحددة: ${expensePeriodLabel}.\nيشمل: الثابت والمتغير والديون إذا كانت مسجلة كمصاريف فعلية.`,
+          variableSpending:
+            `المعنى: مجموع المصاريف المسجلة كـ "متغير" داخل الفترة المحددة فقط.\nالصيغة: المصاريف المتغيرة = مجموع المصاريف المتغيرة بتاريخ داخل الفترة.\nمصادر البيانات: سجلات المصاريف المرئية بعد فلتر الفترة.\nالفترة المحددة: ${expensePeriodLabel}.`,
+          commitments:
+            `المعنى: الالتزامات المطلوبة للفترة.\nالصيغة: الالتزامات = المصاريف الثابتة + أقساط الديون + المصاريف المتكررة المطلوبة.\nمصادر البيانات: المصاريف، الديون، والمصاريف المتكررة.\nالفترة المحددة: ${budgetPlannerPeriodLabel}.\nلا تشمل الأهداف إلا إذا تم تسجيلها كمصروف فعلي.`,
+          flexibleRemaining:
+            `المعنى: المال المتبقي للإنفاق المرن.\nالصيغة: الرصيد المرن المتبقي = إجمالي المال المتاح - الالتزامات - الإنفاق المتغير المسجل.\nمصادر البيانات: الدخل، المصاريف، الديون، والتعديل اليدوي إن وجد.\nالفترة المحددة: ${budgetPlannerPeriodLabel}.`,
+          allowedSpend:
+            `المعنى: حد الصرف الآمن حتى نهاية الفترة.\nالصيغة اليومية: المسموح يوميًا = الرصيد المرن المتبقي ÷ الأيام المتبقية.\nالصيغة الأسبوعية: المسموح أسبوعيًا = الرصيد المرن المتبقي ÷ الأسابيع المتبقية.\nمصادر البيانات: الرصيد المرن المتبقي وعدد الأيام/الأسابيع المتبقية.\nالفترة المحددة: ${budgetPlannerPeriodLabel}.`
+        }
+      : {
+          availableBalance:
+            `Meaning: available balance for the selected period.\nFormula: available balance = carried balance from previous periods + latest manual adjustment if one exists.\nData sources: prior income, prior expenses, and the latest manual balance adjustment saved in settings.\nSelected period: ${budgetPlannerPeriodLabel}.\nIncludes: carried balance and manual adjustment. It does not include this period's income or spending in this row.`,
+          expectedIncome:
+            `Meaning: income expected inside the selected period.\nFormula: period income = recorded income inside the period + expected recurring income not recorded yet.\nData sources: income records and recurring income records.\nSelected period: ${budgetPlannerPeriodLabel}.`,
+          totalAvailable:
+            `Meaning: total money available before commitments.\nFormula: total available money = carried balance + period income.\nData sources: income, prior expenses, recurring income, and manual adjustment if one exists.\nSelected period: ${budgetPlannerPeriodLabel}.`,
+          fixedSpending:
+            `Meaning: total expenses marked "fixed" inside the selected period only.\nFormula: fixed spending = sum of fixed expenses dated inside the period.\nData sources: visible expense records after the period filter.\nSelected period: ${expensePeriodLabel}.\nIncludes: actual fixed expenses only. It does not include projections.`,
+          totalSpending:
+            `Meaning: actual spending inside the selected period.\nFormula: total spending = sum of all expenses dated inside the period.\nData sources: visible expense records after the period filter.\nSelected period: ${expensePeriodLabel}.\nIncludes: fixed, variable, and debt payments when they are recorded as actual expenses.`,
+          variableSpending:
+            `Meaning: total expenses marked "variable" inside the selected period only.\nFormula: variable spending = sum of variable expenses dated inside the period.\nData sources: visible expense records after the period filter.\nSelected period: ${expensePeriodLabel}.`,
+          commitments:
+            `Meaning: required commitments for the period.\nFormula: commitments = fixed expenses + debt installments + required recurring expenses.\nData sources: expenses, debts, and recurring expenses.\nSelected period: ${budgetPlannerPeriodLabel}.\nGoals are excluded unless they were recorded as actual expenses.`,
+          flexibleRemaining:
+            `Meaning: money left for flexible spending.\nFormula: flexible remaining = total available money - commitments - recorded variable spending.\nData sources: income, expenses, debts, and manual adjustment if one exists.\nSelected period: ${budgetPlannerPeriodLabel}.`,
+          allowedSpend:
+            `Meaning: safe spending limit until the end of the period.\nDaily formula: allowed daily spend = flexible remaining ÷ remaining days.\nWeekly formula: allowed weekly spend = flexible remaining ÷ remaining weeks.\nData sources: flexible remaining and remaining days/weeks.\nSelected period: ${budgetPlannerPeriodLabel}.`
+        }
 
   const performAction = async (label: string, action: AsyncAction): Promise<boolean> => {
     setBusyLabel(label)
@@ -372,6 +1400,7 @@ export function App() {
         setSnapshot(next)
         setStatusMessage(text.completedAction(label))
       })
+      void refreshSyncStatus()
       window.setTimeout(() => setStatusMessage(''), 2200)
       return true
     } catch (error) {
@@ -385,9 +1414,16 @@ export function App() {
   }
 
   const refreshSyncStatus = async (): Promise<void> => {
-    if (!bridge) return
+    if (!bridge && !syncBridge) return
+    console.info('[renderer] CLICK REFRESH')
     try {
-      const nextStatus = await bridge.getSyncStatus()
+      const nextStatus = bridge ? await bridge.getSyncStatus() : await syncBridge!.refreshSyncState()
+      console.info('[renderer] SYNC STATUS RECEIVED', {
+        enabled: nextStatus.enabled,
+        paused: nextStatus.paused,
+        connection: nextStatus.backendReachable,
+        account: nextStatus.accountEmail
+      })
       setSyncStatus(nextStatus)
     } catch (error) {
       const nextError = error instanceof Error ? error : new Error(String(error))
@@ -396,11 +1432,12 @@ export function App() {
   }
 
   const runManualSync = async (): Promise<void> => {
-    if (!bridge) return
+    if (!bridge && !syncBridge) return
+    console.info('[renderer] CLICK SYNC')
     setBusyLabel(text.settings.syncNow)
     setActionError('')
     try {
-      const nextStatus = await bridge.syncNow()
+      const nextStatus = bridge ? await bridge.syncNow() : await syncBridge!.syncNow()
       setSyncStatus(nextStatus)
       if (nextStatus.phase === 'error' && nextStatus.lastError) {
         setActionError(nextStatus.lastError)
@@ -428,6 +1465,35 @@ export function App() {
     } catch (error) {
       const nextError = error instanceof Error ? error : new Error(String(error))
       setActionError(nextError.message || text.common.genericError)
+    } finally {
+      setBusyLabel('')
+    }
+  }
+
+  const uploadAllLocalData = async (): Promise<void> => {
+    if (!bridge && !syncBridge) return
+    console.info('[renderer] CLICK UPLOAD ALL')
+    setBusyLabel(text.settings.uploadingAllLocalData)
+    setActionError('')
+    try {
+      console.info('[renderer] Full upload started')
+      const nextStatus = bridge ? await bridge.uploadAllLocalData() : await syncBridge!.uploadAllData()
+      setSyncStatus(nextStatus)
+      setFullUploadDialogOpen(false)
+      if (nextStatus.phase === 'error' && nextStatus.lastError) {
+        console.error('[renderer] Full upload failed', nextStatus.lastError)
+        setActionError(nextStatus.lastError)
+      } else {
+        console.info('[renderer] Full upload completed')
+        setStatusMessage(text.settings.uploadCompleted)
+        window.setTimeout(() => setStatusMessage(''), 2200)
+      }
+    } catch (error) {
+      const nextError = error instanceof Error ? error : new Error(String(error))
+      console.error('[renderer] Full upload failed', nextError)
+      setActionError(nextError.message || text.common.genericError)
+      setStatusMessage(text.settings.uploadFailed)
+      window.setTimeout(() => setStatusMessage(''), 2200)
     } finally {
       setBusyLabel('')
     }
@@ -482,6 +1548,16 @@ export function App() {
   const syncTopbarLabel = syncStatus
     ? `${text.settings.syncTitle}: ${syncPhaseLabel}`
     : `${text.settings.syncTitle}: ${text.settings.syncLoading}`
+  const plannerStatusSource = budgetPageInsights?.budgetSummary.plannerStatus ?? budgetPlanner?.status
+  const plannerStatusLabel = plannerStatusSource
+    ? plannerStatusSource === 'comfortable'
+      ? text.budget.plannerStatusComfortable
+      : plannerStatusSource === 'tight'
+        ? text.budget.plannerStatusTight
+        : plannerStatusSource === 'risky'
+          ? text.budget.plannerStatusRisky
+          : text.budget.plannerStatusNotEnough
+    : text.budget.plannerStatusComfortable
   const defaultExpenseCategoryId = snapshot.categories.find((entry) => entry.id === 'misc')?.id ?? snapshot.categories[0]?.id ?? 'misc'
   const defaultDebtCategoryId = snapshot.categories.find((entry) => entry.type === 'debt')?.id ?? snapshot.categories[0]?.id ?? 'debt'
   const budgetMethodLabels = Object.fromEntries(
@@ -683,12 +1759,46 @@ export function App() {
   }
 
   const updateBudgetMethod = async (method: BudgetMethod): Promise<void> => {
+    console.info('BUDGET ENGINE UPDATED', { method })
     const payload: SaveBudgetPlanInput = { ...currentBudgetPlan, method }
     await performAction(text.budget.method, () => bridge.saveBudgetPlan(payload))
   }
 
+  const updateBudgetEnginePlan = async (patch: Partial<SaveBudgetPlanInput>, label: string): Promise<void> => {
+    console.info('BUDGET ENGINE UPDATED', patch)
+    await performAction(label, () => bridge.saveBudgetPlan({ ...currentBudgetPlan, ...patch }))
+  }
+
   const updateSettings = async (next: Settings): Promise<void> => {
     await performAction(text.nav.settings, () => bridge.saveSettings(next))
+  }
+
+  const saveBalanceCorrection = async (currentBalance: number): Promise<void> => {
+    if (!settings) return
+    const newBalance = Number.parseFloat(balanceAdjustmentValue.replace(',', '.').trim())
+    if (!Number.isFinite(newBalance)) {
+      setActionError(balanceCopy.amountError)
+      return
+    }
+    const now = new Date().toISOString()
+    const correction = {
+      id: `balance-adjustment-${Date.now()}`,
+      effectiveDate: now,
+      calculatedBalanceBefore: round2(currentBalance),
+      correctedBalance: round2(newBalance),
+      difference: round2(newBalance - currentBalance),
+      note: balanceAdjustmentNote.trim(),
+      createdAt: now,
+      updatedAt: now
+    }
+    await performAction(balanceCopy.editCurrentBalance, () =>
+      bridge.saveSettings({
+        ...settings,
+        balanceCorrection: correction
+      })
+    )
+    setBalanceAdjustmentValue('')
+    setBalanceAdjustmentNote('')
   }
 
   const renderIncome = () => (
@@ -834,12 +1944,11 @@ export function App() {
             <MetricTile label={text.common.recurring} value={String(filteredExpenses.filter((entry) => entry.recurring).length)} icon={RefreshCw} />
           </div>
           <div className="forecast-list">
-            <MetricLine label={text.dashboard.totalIncome} value={fmtMoney(dashboard.totalIncome)} />
-            <MetricLine label={text.dashboard.fixedMonthlyExpenses} value={fmtMoney(dashboard.fixedMonthlyExpenses)} />
-            <MetricLine label={text.dashboard.remainingAfterFixedExpenses} value={fmtMoney(dashboard.remainingAfterFixedExpenses)} />
-            <MetricLine label={text.dashboard.variableExpensesThisMonth} value={fmtMoney(dashboard.variableExpensesThisMonth)} />
-            <MetricLine label={text.dashboard.remainingAfterFixedAndVariableExpenses} value={fmtMoney(dashboard.remainingAfterFixedAndVariableExpenses)} />
-            <MetricLine label={text.dashboard.dailySafeUntilMonthEnd} value={fmtMoney(snapshot.analytics.forecast.adjustedSafeDailySpendingUntilMonthEnd)} />
+            <ExplainedMetricLine label={text.expenses.totalExpensesForPeriod} value={fmtMoney(expensePeriodSummary?.totalExpensesForPeriod ?? 0)} help={helpCopy.totalSpending} onHelp={(title, body) => setHelpDialog({ title, body })} />
+            <ExplainedMetricLine label={text.expenses.fixedExpensesForPeriod} value={fmtMoney(expensePeriodSummary?.fixedExpensesForPeriod ?? 0)} help={helpCopy.fixedSpending} onHelp={(title, body) => setHelpDialog({ title, body })} />
+            <ExplainedMetricLine label={text.expenses.variableExpensesForPeriod} value={fmtMoney(expensePeriodSummary?.variableExpensesForPeriod ?? 0)} help={helpCopy.variableSpending} onHelp={(title, body) => setHelpDialog({ title, body })} />
+            <MetricLine label={text.common.recurring} value={String(expensePeriodSummary?.recurringCount ?? 0)} />
+            <MetricLine label={text.expenses.transactionsCount} value={String(expensePeriodSummary?.transactionCount ?? 0)} />
           </div>
         </SectionCard>
       </div>
@@ -900,61 +2009,107 @@ export function App() {
     </div>
   )
 
-  const renderBudget = () => (
-    <div className="screen-grid">
-      <div className="two-column-grid">
-        <SectionCard title={text.budget.engineTitle} subtitle={text.budget.engineSubtitle}>
-          <div className="form-grid">
-            <SelectField label={text.budget.method} value={currentBudgetPlan.method} options={Object.entries(budgetMethodLabels).map(([value, label]) => ({ value, label }))} onChange={(value) => void updateBudgetMethod(value as BudgetMethod)} />
-            <InputField label={text.budget.monthlySavingsTarget} type="number" value={currentBudgetPlan.customSavingsTarget} onChange={(value) => void performAction(text.budget.monthlySavingsTarget, () => bridge.saveBudgetPlan({ ...currentBudgetPlan, customSavingsTarget: parseDecimalInput(value) }))} />
-            <InputField label={text.budget.emergencyTarget} type="number" value={currentBudgetPlan.customEmergencyTarget} onChange={(value) => void performAction(text.budget.emergencyTarget, () => bridge.saveBudgetPlan({ ...currentBudgetPlan, customEmergencyTarget: parseDecimalInput(value) }))} />
-            <InputField label={text.budget.debtAcceleration} type="number" value={currentBudgetPlan.debtAcceleration} onChange={(value) => void performAction(text.budget.debtAcceleration, () => bridge.saveBudgetPlan({ ...currentBudgetPlan, debtAcceleration: parseDecimalInput(value) }))} />
-            <TextAreaField label={text.budget.notes} value={currentBudgetPlan.notes} onChange={(value) => void performAction(text.budget.notes, () => bridge.saveBudgetPlan({ ...currentBudgetPlan, notes: value }))} />
+  const renderBudget = () => {
+    const budgetSummary = budgetPageInsights?.budgetSummary
+    const hasCommitmentsOverflow = (budgetSummary?.totalCommitments ?? 0) > (budgetSummary?.totalAvailableIncome ?? 0)
+    const currentAvailableBalance = budgetSummary?.availableBalance ?? 0
+    const lastAdjustment = settings?.balanceCorrection ?? null
+
+    return (
+      <div className="screen-grid">
+        <SectionCard title={text.budget.selectedPeriod} subtitle={text.budget.periodFilterSubtitle}>
+          <div className="form-grid compact">
+            <SelectField
+              label={text.budget.selectedPeriod}
+              value={budgetPeriodFilter}
+              options={budgetPeriodOptions}
+              onChange={(value) => setBudgetPeriodFilter(value as BudgetPeriodFilter)}
+            />
           </div>
         </SectionCard>
 
-        <SectionCard title={text.budget.sustainabilityTitle} subtitle={text.budget.sustainabilitySubtitle}>
+        <SectionCard title={balanceCopy.editCurrentBalance} subtitle={balanceCopy.currentAvailableBalance}>
+          <div className="metric-grid">
+            <MetricTile label={balanceCopy.currentAvailableBalance} value={fmtMoney(currentAvailableBalance)} icon={Wallet} />
+            <MetricTile
+              label={balanceCopy.lastAdjustment}
+              value={lastAdjustment ? fmtMoney(lastAdjustment.difference) : balanceCopy.noAdjustment}
+              icon={Pencil}
+            />
+          </div>
+          {lastAdjustment ? (
+            <p className="section-note">
+              {balanceCopy.adjustedOn}: {lastAdjustment.updatedAt.slice(0, 10)}
+              {lastAdjustment.note ? ` - ${lastAdjustment.note}` : ''}
+            </p>
+          ) : null}
+          <div className="form-grid compact">
+            <InputField label={balanceCopy.newBalance} type="number" value={balanceAdjustmentValue} onChange={setBalanceAdjustmentValue} hint={fmtMoney(currentAvailableBalance)} />
+            <InputField label={balanceCopy.adjustmentReason} value={balanceAdjustmentNote} onChange={setBalanceAdjustmentNote} hint={balanceCopy.notePlaceholder} />
+          </div>
+          <button className="primary-button" onClick={() => void saveBalanceCorrection(currentAvailableBalance)} disabled={actionsDisabled || !balanceAdjustmentValue.trim()}>
+            <Pencil size={16} />
+            {balanceCopy.saveAdjustment}
+          </button>
+        </SectionCard>
+
+        <SectionCard title={text.budget.summaryTitle} subtitle={text.budget.summarySubtitle}>
+          <div className="metric-grid">
+            <MetricTile label={text.budget.openingAvailableBalance} value={fmtMoney(budgetSummary?.availableBalance ?? 0)} icon={Wallet} />
+            <MetricTile label={text.budget.expectedIncome} value={fmtMoney(budgetSummary?.expectedIncome ?? 0)} icon={TrendingUp} />
+            <MetricTile label={text.budget.totalIncomeAvailable} value={fmtMoney(budgetSummary?.totalAvailableIncome ?? 0)} icon={ArrowUpCircle} />
+            <MetricTile label={text.budget.totalCommitmentsOnly} value={fmtMoney(budgetSummary?.totalCommitments ?? 0)} icon={Landmark} />
+            <MetricTile label={text.budget.variableSpentToDate} value={fmtMoney(budgetSummary?.variableSpentSoFar ?? 0)} icon={ArrowDownCircle} />
+            <MetricTile label={text.budget.flexibleBalanceRemaining} value={fmtMoney(budgetSummary?.remainingFlexible ?? 0)} icon={Goal} />
+          </div>
           <div className="forecast-list">
-            <MetricLine label={text.budget.disposableCash} value={fmtMoney(dashboard.disposableCash)} />
-            <MetricLine label={text.budget.goalCapacity} value={fmtMoney(dashboard.goalContributionCapacity)} />
-            <MetricLine label={text.budget.remainingBalance} value={fmtMoney(dashboard.remainingBalance)} />
-            <MetricLine label={text.dashboard.fixedMonthlyExpenses} value={fmtMoney(dashboard.fixedMonthlyExpenses)} />
-            <MetricLine label={text.dashboard.remainingAfterFixedExpenses} value={fmtMoney(dashboard.remainingAfterFixedExpenses)} />
-            <MetricLine label={text.dashboard.remainingAfterFixedAndVariableExpenses} value={fmtMoney(dashboard.remainingAfterFixedAndVariableExpenses)} />
-            <MetricLine label={text.budget.healthScore} value={`${dashboard.budgetHealthScore.toFixed(0)} / 100`} />
-            <RiskChip level={dashboard.riskLevel} label={`${text.common.risk}: ${translateRiskLevel(dashboard.riskLevel, language)}`} />
+            <ExplainedMetricLine label={text.budget.openingAvailableBalance} value={fmtMoney(budgetSummary?.availableBalance ?? 0)} help={helpCopy.availableBalance} onHelp={(title, body) => setHelpDialog({ title, body })} />
+            <ExplainedMetricLine label={text.budget.expectedIncome} value={fmtMoney(budgetSummary?.expectedIncome ?? 0)} help={helpCopy.expectedIncome} onHelp={(title, body) => setHelpDialog({ title, body })} />
+            <ExplainedMetricLine label={text.budget.totalIncomeAvailable} value={fmtMoney(budgetSummary?.totalAvailableIncome ?? 0)} help={helpCopy.totalAvailable} onHelp={(title, body) => setHelpDialog({ title, body })} />
+            <ExplainedMetricLine label={text.budget.totalCommitmentsOnly} value={fmtMoney(budgetSummary?.totalCommitments ?? 0)} help={helpCopy.commitments} onHelp={(title, body) => setHelpDialog({ title, body })} />
+            <ExplainedMetricLine label={text.budget.flexibleBalanceRemaining} value={fmtMoney(budgetSummary?.remainingFlexible ?? 0)} help={helpCopy.flexibleRemaining} onHelp={(title, body) => setHelpDialog({ title, body })} />
+          </div>
+          {hasCommitmentsOverflow ? <p className="section-note">{text.budget.commitmentsOverflowWarning}</p> : null}
+        </SectionCard>
+
+        <SectionCard title={text.budget.commitmentsTitle} subtitle={text.budget.commitmentsSubtitle}>
+          <div className="forecast-list">
+            <ExplainedMetricLine label={text.budget.fixedExpenses} value={fmtMoney(budgetSummary?.fixedExpenses ?? 0)} help={helpCopy.commitments} onHelp={(title, body) => setHelpDialog({ title, body })} />
+            <ExplainedMetricLine label={text.budget.debtInstallments} value={fmtMoney(budgetSummary?.debtInstallments ?? 0)} help={helpCopy.commitments} onHelp={(title, body) => setHelpDialog({ title, body })} />
+            <ExplainedMetricLine label={text.budget.recurringRequiredExpenses} value={fmtMoney(budgetSummary?.requiredRecurringExpenses ?? 0)} help={helpCopy.commitments} onHelp={(title, body) => setHelpDialog({ title, body })} />
+            <ExplainedMetricLine label={text.budget.totalCommitmentsOnly} value={fmtMoney(budgetSummary?.totalCommitments ?? 0)} help={helpCopy.commitments} onHelp={(title, body) => setHelpDialog({ title, body })} />
           </div>
         </SectionCard>
-      </div>
 
-      <SectionCard title={text.budget.comparisonTitle} subtitle={text.budget.comparisonSubtitle}>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>{text.expenses.category}</th>
-              <th>{text.common.recommended}</th>
-              <th>{text.common.actual}</th>
-              <th>{text.common.difference}</th>
-              <th>{text.common.used}</th>
-              <th>{text.common.status}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {snapshot.analytics.categoryBudgets.map((item) => (
-              <tr key={item.categoryId}>
-                <td><Badge label={item.categoryName} color={item.color} /></td>
-                <td>{fmtMoney(item.recommended)}</td>
-                <td>{fmtMoney(item.actual)}</td>
-                <td className={item.difference < 0 ? 'negative' : 'positive'}>{item.difference < 0 ? '-' : '+'}{fmtMoney(Math.abs(item.difference))}</td>
-                <td>{item.percentUsed.toFixed(1)}%</td>
-                <td><span className={`state-pill state-${item.status}`}>{translateStatus(item.status, language)}</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </SectionCard>
-    </div>
-  )
+        <SectionCard title={text.budget.smartPlannerTitle} subtitle={budgetSummary?.isPastPeriod ? text.budget.smartPlannerPastSubtitle : text.budget.smartPlannerSubtitle}>
+          <div className="metric-grid">
+            <MetricTile label={text.budget.selectedPeriod} value={budgetPlannerPeriodLabel} icon={CalendarRange} />
+            <MetricTile label={text.budget.plannerStatus} value={plannerStatusLabel} icon={Wallet} />
+            <MetricTile label={text.budget.remainingDaysInPeriod} value={String(budgetSummary?.remainingDaysInPeriod ?? 0)} icon={TrendingDown} />
+            <MetricTile label={text.budget.flexibleBalanceRemaining} value={fmtMoney(budgetSummary?.remainingFlexible ?? 0)} icon={Goal} />
+          </div>
+          <div className="forecast-list">
+            <MetricLine label={text.budget.balanceAfterCommitments} value={fmtMoney(budgetSummary?.balanceAfterCommitments ?? 0)} />
+            <MetricLine label={text.budget.variableSpentToDate} value={fmtMoney(budgetSummary?.variableSpentSoFar ?? 0)} />
+            <MetricLine label={text.budget.flexibleBalanceRemaining} value={fmtMoney(budgetSummary?.remainingFlexible ?? 0)} />
+            <ExplainedMetricLine label={text.budget.allowedMonthly} value={fmtMoney(budgetSummary?.allowedMonthlySpending ?? 0)} help={helpCopy.allowedSpend} onHelp={(title, body) => setHelpDialog({ title, body })} />
+            <ExplainedMetricLine label={text.budget.allowedWeekly} value={fmtMoney(budgetSummary?.allowedWeeklySpending ?? 0)} help={helpCopy.allowedSpend} onHelp={(title, body) => setHelpDialog({ title, body })} />
+            <ExplainedMetricLine label={text.budget.allowedDaily} value={fmtMoney(budgetSummary?.allowedDailySpending ?? 0)} help={helpCopy.allowedSpend} onHelp={(title, body) => setHelpDialog({ title, body })} />
+          </div>
+        </SectionCard>
+
+        <SectionCard title={text.budget.formulaTitle} subtitle={text.budget.formulaSubtitle}>
+          <div className="forecast-list">
+            <MetricLine label={text.budget.totalIncomeAvailable} value={`${text.budget.openingAvailableBalance} + ${text.budget.expectedIncome}`} />
+            <MetricLine label={text.budget.balanceAfterCommitments} value={`${text.budget.totalIncomeAvailable} - ${text.budget.totalCommitmentsOnly}`} />
+            <MetricLine label={text.budget.allowedMonthly} value={`${text.budget.balanceAfterCommitments} - ${text.budget.variableSpentToDate}`} />
+          </div>
+          {hasCommitmentsOverflow ? <p className="section-note">{text.budget.commitmentsOverflowWarning}</p> : null}
+        </SectionCard>
+
+      </div>
+    )
+  }
 
   const renderGoals = () => (
     <div className="screen-grid">
@@ -1181,12 +2336,37 @@ export function App() {
             <MetricLine label={text.settings.syncAccount} value={syncStatus?.accountEmail ?? text.settings.syncNotAvailable} />
             {syncStatus?.lastError ? <MetricLine label={text.settings.syncError} value={syncStatus.lastError} /> : null}
           </div>
-          <div className="toolbar wrap">
-            <button className="primary-button" onClick={() => void runManualSync()} disabled={actionsDisabled || !syncStatus?.enabled || syncStatus.paused}>
+          <div className="toolbar wrap sync-action-toolbar">
+            <button
+              className="primary-button sync-action-button"
+              onClick={() => {
+                console.log('SYNC BUTTON ACTUAL CLICK')
+                void runManualSync()
+              }}
+              disabled={actionsDisabled || !bridge}
+            >
               <RefreshCw size={16} />
               {text.settings.syncNow}
             </button>
-            <button className="secondary-button" onClick={() => void refreshSyncStatus()} disabled={actionsDisabled}>
+            <button
+              className="secondary-button sync-action-button"
+              onClick={() => {
+                console.log('UPLOAD ALL BUTTON ACTUAL CLICK')
+                console.info('[renderer] Open full upload confirmation')
+                setFullUploadDialogOpen(true)
+              }}
+              disabled={actionsDisabled || !bridge}
+            >
+              {text.settings.uploadAllLocalData}
+            </button>
+            <button
+              className="secondary-button sync-action-button"
+              onClick={() => {
+                console.log('REFRESH BUTTON ACTUAL CLICK')
+                void refreshSyncStatus()
+              }}
+              disabled={actionsDisabled}
+            >
               {text.settings.refreshSyncStatus}
             </button>
           </div>
@@ -1429,6 +2609,45 @@ export function App() {
               </button>
               <button className="ghost-button" onClick={() => setResetDialogOpen(false)}>
                 {text.common.cancel}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {fullUploadDialogOpen ? (
+        <div className="dialog-overlay">
+          <div className="dialog-card">
+            <h3>{text.settings.fullUploadDialogTitle}</h3>
+            <p>{text.settings.fullUploadDialogDescription}</p>
+            <div className="toolbar">
+              <button
+                className="primary-button"
+                onClick={() => {
+                  console.log('UPLOAD ALL CONFIRM BUTTON ACTUAL CLICK')
+                  void uploadAllLocalData()
+                }}
+              >
+                {text.settings.confirmFullUpload}
+              </button>
+              <button className="ghost-button" onClick={() => setFullUploadDialogOpen(false)}>
+                {text.common.cancel}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {helpDialog ? (
+        <div className="dialog-overlay">
+          <div className="dialog-card help-dialog">
+            <h3>{helpDialog.title}</h3>
+            {helpDialog.body.split('\n').map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+            <div className="toolbar">
+              <button className="primary-button" onClick={() => setHelpDialog(null)}>
+                {language === 'ar' ? 'حسنًا' : 'OK'}
               </button>
             </div>
           </div>

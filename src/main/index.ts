@@ -7,7 +7,7 @@ import { DesktopSyncManager } from './desktop-sync'
 import { DesktopSyncStateStore } from './desktop-sync-state'
 import { FinanceService } from './finance-service'
 import { registerIpcHandlers } from './ipc'
-import { readDesktopSyncConfig } from './sync-config'
+import { readDesktopSyncConfigWithDebug } from './sync-config'
 
 let startupLogPath = ''
 
@@ -105,15 +105,23 @@ app.whenReady().then(() => {
   logMain('Application ready')
   electronApp.setAppUserModelId('com.moneywise.desktop')
   const database = new FinanceDatabase()
-  const syncConfig = readDesktopSyncConfig()
+  const { config: syncConfig, debug: syncConfigDebug } = readDesktopSyncConfigWithDebug()
+  logMain('SYNC CONFIG DEBUG', syncConfigDebug)
   const syncStateStore = new DesktopSyncStateStore(join(logDir, 'moneywise', 'sync-state.json'))
-  const syncManager = new DesktopSyncManager(database, syncStateStore, syncConfig, logMain)
+  const syncManager = new DesktopSyncManager(database, syncStateStore, syncConfig, logMain, () => {
+    logMain('SYNC PULL RELOAD RENDERER')
+    BrowserWindow.getAllWindows().forEach((window) => {
+      if (!window.isDestroyed()) {
+        window.webContents.reloadIgnoringCache()
+      }
+    })
+  })
   const financeService = new FinanceService(database, (reason) => syncManager.scheduleSync(reason))
   registerIpcHandlers(financeService, syncManager)
   logMain('Desktop sync foundation', {
     enabled: syncConfig.enabled,
     backendUrl: syncConfig.backendUrl,
-    deviceId: syncConfig.enabled ? syncStateStore.getOrCreateDeviceId(syncConfig.deviceId) : null
+    deviceId: syncConfig.backendUrl ? syncStateStore.getOrCreateDeviceId(syncConfig.deviceId) : null
   })
 
   app.on('browser-window-created', (_, window) => {

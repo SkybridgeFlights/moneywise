@@ -10,7 +10,8 @@ export const defaultSettings: Settings = {
   notificationsEnabled: true,
   includeOptionalGoalsInForecast: false,
   backupFrequency: 'weekly',
-  rtl: true
+  rtl: true,
+  balanceCorrection: null
 }
 
 export const defaultCategories: Category[] = [

@@ -65,11 +65,33 @@ export function registerIpcHandlers(service: FinanceService, syncManager: Deskto
   })
   ipcMain.handle('sync:getStatus', (event) => {
     ensureTrustedSender(event)
+    console.log('[main] SYNC REFRESH TRIGGERED (sync:getStatus)')
     return syncManager.getStatus()
   })
   ipcMain.handle('sync:runNow', async (event) => {
     ensureTrustedSender(event)
+    console.log('[main] SYNC NOW TRIGGERED (sync:runNow)')
     return syncManager.syncNow()
+  })
+  ipcMain.handle('sync:uploadAllLocal', async (event) => {
+    ensureTrustedSender(event)
+    console.log('[main] UPLOAD ALL TRIGGERED (sync:uploadAllLocal)')
+    return syncManager.uploadAllLocalData()
+  })
+  ipcMain.handle('sync:now', async (event) => {
+    ensureTrustedSender(event)
+    console.log('[main] SYNC NOW TRIGGERED (sync:now)')
+    return syncManager.syncNow()
+  })
+  ipcMain.handle('sync:refresh', (event) => {
+    ensureTrustedSender(event)
+    console.log('[main] SYNC REFRESH TRIGGERED (sync:refresh)')
+    return syncManager.getStatus()
+  })
+  ipcMain.handle('sync:uploadAll', async (event) => {
+    ensureTrustedSender(event)
+    console.log('[main] UPLOAD ALL TRIGGERED (sync:uploadAll)')
+    return syncManager.uploadAllLocalData()
   })
   registerValidatedHandler('sync:setPaused', booleanSchema, (paused: boolean) => syncManager.setPaused(paused))
   registerValidatedHandler('income:save', incomeInputSchema, (input: SaveIncomeInput) => service.saveIncome(input))

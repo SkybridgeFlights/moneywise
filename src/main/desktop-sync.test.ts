@@ -582,4 +582,134 @@ describe('DesktopSyncManager', () => {
     expect(store.read().cursor).toBe('2026-04-06T00:00:00.000Z')
     expect(store.read().manifest['expense:expense-local']?.remoteVersion).toBe(1)
   })
+
+  it('uploads all existing local records explicitly and does not re-upload them again after success', async () => {
+    const state = createEmptyState()
+    state.incomes.push({
+      id: 'income-legacy',
+      name: 'Legacy salary',
+      groupName: 'Primary',
+      amount: 2222,
+      date: '2026-04-01',
+      type: 'fixed',
+      recurring: false,
+      notes: ''
+    })
+    state.expenses.push({
+      id: 'expense-legacy',
+      title: 'Legacy grocery',
+      amount: 75,
+      date: '2026-04-02',
+      categoryId: 'food',
+      paymentMethod: 'card',
+      type: 'variable',
+      recurring: false,
+      notes: '',
+      tags: [],
+      goalId: null,
+      debtId: null,
+      allocationKind: 'spend'
+    })
+
+    const database = new FakeFinanceDatabase(state)
+    const { dir, store } = createStateStore()
+    cleanupDirs.push(dir)
+    store.write({
+      deviceId: 'desktop-test',
+      authToken: 'token-legacy',
+      userId: 'user-legacy',
+      accountEmail: 'legacy@example.com',
+      authMode: 'dev-session',
+      cursor: '2026-04-01T00:00:00.000Z',
+      bootstrapCompleted: true,
+      paused: false,
+      lastSyncAt: null,
+      lastError: null,
+      manifest: {
+        'income:income-legacy': {
+          entityType: 'income',
+          recordId: 'income-legacy',
+          lastSyncedHash: hashPayload(state.incomes[0] as unknown as Record<string, unknown>),
+          remoteVersion: 1,
+          updatedAt: '2026-04-01T00:00:00.000Z',
+          deletedAt: null
+        }
+      }
+    })
+
+    const remoteRecords = new Map<string, { entityType: SyncEntityType; recordId: string; payload: Record<string, unknown>; version: number; updatedAt: string; deletedAt: string | null }>()
+    const pushedBatches: unknown[] = []
+
+    globalThis.fetch = createFetchMock((url, init) => {
+      if (url.endsWith('/health')) return { body: { ok: true } }
+      if (url.includes('/api/sync/changes')) {
+        const since = new URL(url).searchParams.get('since') ?? '1970-01-01T00:00:00.000Z'
+        return { body: { cursor: since, changes: [] } }
+      }
+      if (url.includes('/api/sync/bootstrap')) {
+        const records = Array.from(remoteRecords.values()).reduce<Record<string, unknown[]>>((acc, record) => {
+          acc[record.entityType] ??= []
+          acc[record.entityType].push({
+            id: record.recordId,
+            payload: record.payload,
+            createdAt: record.updatedAt,
+            updatedAt: record.updatedAt,
+            deletedAt: record.deletedAt,
+            version: record.version,
+            lastModifiedByDeviceId: 'remote'
+          })
+          return acc
+        }, {})
+        return {
+          body: {
+            order: ['settings', 'category', 'budget', 'goal', 'debt', 'income', 'expense', 'monthly-summary'],
+            cursor: remoteRecords.size > 0 ? '2026-04-06T00:00:00.000Z' : '2026-04-01T00:00:00.000Z',
+            records
+          }
+        }
+      }
+      if (url.endsWith('/api/sync/push')) {
+        const body = init?.body ? JSON.parse(String(init.body)) : null
+        pushedBatches.push(body)
+        const applied = ((body?.changes as Array<{ entityType: SyncEntityType; recordId: string; payload: Record<string, unknown>; deletedAt: string | null }> | undefined) ?? []).map(
+          (change, index) => {
+            const updatedAt = `2026-04-06T00:00:0${index}.000Z`
+            remoteRecords.set(`${change.entityType}:${change.recordId}`, {
+              entityType: change.entityType,
+              recordId: change.recordId,
+              payload: change.payload,
+              version: 1,
+              updatedAt,
+              deletedAt: change.deletedAt
+            })
+            return {
+              entityType: change.entityType,
+              recordId: change.recordId,
+              version: 1,
+              updatedAt,
+              deletedAt: change.deletedAt
+            }
+          }
+        )
+        return { body: { applied, conflicts: [] } }
+      }
+      throw new Error(`Unhandled URL: ${url}`)
+    }) as typeof fetch
+
+    const manager = new DesktopSyncManager(database as never, store, createConfig(), () => undefined)
+    const firstStatus = await manager.uploadAllLocalData()
+
+    expect(firstStatus.pendingChanges).toBe(0)
+    expect(pushedBatches).toHaveLength(1)
+    expect(((pushedBatches[0] as { changes: Array<{ recordId: string }> }).changes).map((entry) => entry.recordId).sort()).toEqual([
+      'expense-legacy',
+      'income-legacy',
+      'settings'
+    ])
+
+    pushedBatches.length = 0
+    const secondStatus = await manager.uploadAllLocalData()
+    expect(secondStatus.pendingChanges).toBe(0)
+    expect(pushedBatches).toHaveLength(0)
+  })
 })

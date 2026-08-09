@@ -5,6 +5,7 @@ export type DebtPaymentFrequency = 'monthly' | 'weekly'
 export type GoalPlanStatus = 'behind' | 'on-track' | 'ahead' | 'completed'
 export type DebtStatus = 'active' | 'completed'
 export type ForecastAffordabilityStatus = 'safe' | 'tight' | 'insufficient'
+export type SmartSpendingPlannerStatus = 'comfortable' | 'tight' | 'risky' | 'not-enough'
 
 export type IncomeType = 'fixed' | 'variable'
 export type ExpenseType = 'fixed' | 'variable'
@@ -168,6 +169,18 @@ export interface Settings {
   includeOptionalGoalsInForecast: boolean
   backupFrequency: 'manual' | 'weekly' | 'monthly'
   rtl: boolean
+  balanceCorrection?: BalanceCorrection | null
+}
+
+export interface BalanceCorrection {
+  id: string
+  effectiveDate: string
+  calculatedBalanceBefore: number
+  correctedBalance: number
+  difference: number
+  note: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface ActivityLogItem {
@@ -257,6 +270,23 @@ export interface ForecastMetrics {
   unusualExpenses: ExpenseRecord[]
 }
 
+export interface SmartSpendingPlanner {
+  currentRemainingBalance: number
+  remainingUsableBalance: number
+  safeDailySpending: number
+  safeWeeklySpending: number
+  safeMonthlyFlexibleSpending: number
+  remainingDaysInMonth: number
+  remainingWeeksInMonth: number
+  debtInstallmentsDueThisMonth: number
+  plannedGoalContributionsThisMonth: number
+  recommendedGoalContributionsThisMonth: number
+  fixedAndRecurringExpensesStillDueThisMonth: number
+  goalsIncludedInPlanner: boolean
+  shortfallAmount: number
+  status: SmartSpendingPlannerStatus
+}
+
 export interface GoalInsight {
   goalId: string
   name: string
@@ -310,6 +340,7 @@ export interface AnalyticsSnapshot {
   categoryBudgets: CategoryBudgetInsight[]
   monthlyTrend: SpendingTrendPoint[]
   forecast: ForecastMetrics
+  smartPlanner: SmartSpendingPlanner
   goalInsights: GoalInsight[]
   debtInsights: DebtInsight[]
   availableMonths: string[]
