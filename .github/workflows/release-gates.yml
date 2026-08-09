@@ -1,0 +1,55 @@
+name: Release gates
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+            mobile/package-lock.json
+      - name: Install desktop dependencies
+        run: npm ci
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+      - name: Desktop quality gates
+        run: npm run validate
+      - name: Desktop coverage
+        run: npm run coverage
+      - name: Backend tests and coverage
+        working-directory: backend
+        run: npm run coverage
+      - name: Mobile quality gates
+        working-directory: mobile
+        run: npm run validate
+      - name: Mobile coverage and Expo validation
+        working-directory: mobile
+        run: |
+          npm run coverage
+          npx expo-doctor
+          npx expo export --platform web
+      - name: Dependency policy
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm --prefix backend audit --omit=dev --audit-level=high
+          npm --prefix mobile audit --omit=dev --audit-level=critical
+      - name: Windows installer and portable smoke build
+        run: npm run package:win
+      - name: Verify packaged artifacts exist
+        shell: pwsh
+        run: |
+          if (-not (Get-ChildItem release -File | Where-Object { $_.Extension -eq '.exe' })) { throw 'Windows package artifacts were not produced.' }

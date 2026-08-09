@@ -35,6 +35,7 @@ export interface RemoteBootstrapPayload {
 export interface RemoteChangesPayload {
   cursor: string
   changes: RemoteSyncRecord[]
+  hasMore: boolean
 }
 
 export interface PendingSyncChange {

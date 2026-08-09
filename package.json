@@ -10,6 +10,10 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "test": "vitest run",
+    "coverage": "vitest run --coverage",
+    "lint": "eslint src backend",
+    "format:check": "prettier --check package.json backend/package.json .github/**/*.yml",
+    "validate": "npm run lint && npm run format:check && npm run typecheck && npm test && npm run build",
     "test:watch": "vitest",
     "preview": "electron-vite preview",
     "backend:start": "node backend/index.cjs",
@@ -31,15 +35,21 @@
     "zod": "^3.25.42"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.0",
     "@types/node": "^22.20.1",
     "@types/papaparse": "^5.3.16",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^5.2.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "electron": "^41.10.4",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
+    "eslint": "^9.39.0",
+    "globals": "^16.4.0",
+    "prettier": "^3.6.2",
     "typescript": "^5.8.3",
+    "typescript-eslint": "^8.46.0",
     "vite": "^7.3.6",
     "vitest": "^4.1.10"
   },
@@ -60,13 +70,14 @@
       "package.json"
     ],
     "win": {
-      "signAndEditExecutable": false,
+      "icon": "build/icon.png",
       "target": [
         "nsis",
         "portable"
       ]
     },
     "mac": {
+      "icon": "build/icon.png",
       "target": [
         "dmg"
       ],

@@ -152,10 +152,11 @@ function parseBootstrapPayload(value: unknown): RemoteBootstrapPayload {
 
 function parseChangesPayload(value: unknown): RemoteChangesPayload {
   if (!isRecordObject(value)) {
-    return { cursor: DEFAULT_CURSOR, changes: [] }
+    return { cursor: DEFAULT_CURSOR, changes: [], hasMore: false }
   }
   return {
     cursor: typeof value.cursor === 'string' && value.cursor ? value.cursor : DEFAULT_CURSOR,
+    hasMore: value.hasMore === true,
     changes: Array.isArray(value.changes)
       ? value.changes.map((entry) => normalizeRemoteChange(entry)).filter((entry): entry is RemoteSyncRecord => Boolean(entry))
       : []
@@ -671,10 +672,11 @@ export class DesktopSyncManager {
     )
     const parsed = parseChangesPayload(response)
     if (parsed.changes.length === 0) {
-      return this.stateStore.write({
+      const nextState = this.stateStore.write({
         ...syncState,
         cursor: parsed.cursor
       })
+      return parsed.hasMore ? this.pullChanges(nextState) : nextState
     }
 
     const currentState = this.database.getDomainState()
@@ -717,11 +719,12 @@ export class DesktopSyncManager {
       nextManifest[key] = createManifestEntry(change, mapAppliedHash(refreshedIndex.records.get(key), change.deletedAt))
     })
 
-    return this.stateStore.write({
+    const nextState = this.stateStore.write({
       ...syncState,
       cursor: parsed.cursor,
       manifest: nextManifest
     })
+    return parsed.hasMore ? this.pullChanges(nextState) : nextState
   }
 
   private async forceUploadAllLocalRecords(syncState: DesktopSyncStateData, deviceId: string): Promise<DesktopSyncStateData> {

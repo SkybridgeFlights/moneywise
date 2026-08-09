@@ -5,7 +5,10 @@ dist
 backend-data
 mobile/node_modules
 mobile/.expo
+mobile/.git.mobile-backup/
+mobile/coverage/
 release/
+coverage/
 dist/
 out/
 node_modules/
