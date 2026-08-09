@@ -13,9 +13,16 @@ function matchRecordRoute(pathname) {
   }
 }
 
-function createRouter({ authHandlers, syncHandlers, backendInfo }) {
+function createRouter({ authHandlers, syncHandlers, backendInfo, requestLimiter, logger }) {
   return async function route(request, response) {
     const url = new URL(request.url, 'http://localhost')
+    const requestId = request.headers['x-request-id'] || require('node:crypto').randomUUID()
+    const remoteAddress = request.socket.remoteAddress ?? 'unknown'
+    const rate = requestLimiter.consume(`${remoteAddress}:${url.pathname}`)
+    if (!rate.allowed) {
+      sendJson(response, 429, { error: 'Too many requests. Try again later.', requestId })
+      return
+    }
 
     if (request.method === 'OPTIONS') {
       sendJson(response, 204, {})
@@ -103,8 +110,20 @@ function createRouter({ authHandlers, syncHandlers, backendInfo }) {
         })
         return
       }
+      if (error && typeof error.statusCode === 'number') {
+        sendJson(response, error.statusCode, { error: error.message, requestId })
+        return
+      }
+      logger.error('request_failed', {
+        requestId,
+        method: request.method,
+        path: url.pathname,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      })
       sendJson(response, 500, {
-        error: error instanceof Error ? error.message : 'Unexpected backend error.'
+        error: backendInfo?.nodeEnv === 'production' ? 'Unexpected backend error.' : error instanceof Error ? error.message : 'Unexpected backend error.',
+        requestId
       })
     }
   }

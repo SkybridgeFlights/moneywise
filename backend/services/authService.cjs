@@ -1,4 +1,7 @@
 const crypto = require('node:crypto')
+const { createPasswordWorkQueue } = require('./passwordWorkQueue.cjs')
+
+const passwordWorkQueue = createPasswordWorkQueue(4)
 
 function createId(prefix) {
   return `${prefix}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`
@@ -18,13 +21,16 @@ function addMinutes(minutes) {
   return new Date(Date.now() + minutes * 60 * 1000).toISOString()
 }
 
-function hashPassword(password) {
+async function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex')
-  const derivedKey = crypto.scryptSync(password, salt, 64).toString('hex')
-  return `scrypt:${salt}:${derivedKey}`
+  const derivedKey = await passwordWorkQueue.run(() => new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, (error, key) => error ? reject(error) : resolve(key))
+  }))
+  const encoded = derivedKey.toString('hex')
+  return `scrypt:${salt}:${encoded}`
 }
 
-function verifyPassword(password, passwordHash) {
+async function verifyPassword(password, passwordHash) {
   if (!passwordHash) {
     return false
   }
@@ -32,8 +38,11 @@ function verifyPassword(password, passwordHash) {
   if (algorithm !== 'scrypt' || !salt || !expected) {
     return false
   }
-  const actual = crypto.scryptSync(password, salt, 64).toString('hex')
-  return crypto.timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'))
+  const actual = await passwordWorkQueue.run(() => new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, (error, key) => error ? reject(error) : resolve(key))
+  }))
+  const expectedBuffer = Buffer.from(expected, 'hex')
+  return expectedBuffer.length === actual.length && crypto.timingSafeEqual(actual, expectedBuffer)
 }
 
 function sanitizeUser(user) {
@@ -110,7 +119,7 @@ function createAuthService({ config, userRepository, sessionRepository }) {
       }
       return issueSession(user, input, 'dev-session')
     },
-    registerWithPassword(input) {
+    async registerWithPassword(input) {
       const now = new Date().toISOString()
       const email = input.email.toLowerCase()
       const existing = userRepository.findByEmail(email)
@@ -120,7 +129,7 @@ function createAuthService({ config, userRepository, sessionRepository }) {
         throw error
       }
 
-      const passwordHash = hashPassword(input.password)
+      const passwordHash = await hashPassword(input.password)
       const user = existing
         ? userRepository.updatePassword(existing.id, passwordHash, now)
         : userRepository.create({
@@ -134,10 +143,10 @@ function createAuthService({ config, userRepository, sessionRepository }) {
 
       return createPasswordSession(user, input)
     },
-    loginWithPassword(input) {
+    async loginWithPassword(input) {
       const email = input.email.toLowerCase()
       const user = userRepository.findByEmail(email)
-      if (!user || !user.passwordHash || !verifyPassword(input.password, user.passwordHash)) {
+      if (!user || !user.passwordHash || !(await verifyPassword(input.password, user.passwordHash))) {
         const error = new Error('Invalid email or password.')
         error.code = 'invalid_credentials'
         throw error

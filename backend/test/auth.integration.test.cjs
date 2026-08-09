@@ -98,3 +98,44 @@ test('interactive login issues short-lived access and rotating refresh tokens', 
   })
   assert.equal(replay.response.status, 401)
 })
+
+test('oversized request bodies are rejected before parsing', async () => {
+  const baseUrl = await start()
+  const response = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ padding: 'x'.repeat(300 * 1024) })
+  })
+  assert.equal(response.status, 413)
+  assert.match((await response.json()).error, /too large/i)
+})
+
+test('repeated incorrect passwords are rate limited per account and address', async () => {
+  const baseUrl = await start()
+  await json(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    body: JSON.stringify({ email: 'limited@example.com', password: 'correct-horse-battery', deviceId: 'desktop' })
+  })
+  let last
+  for (let attempt = 0; attempt < 9; attempt += 1) {
+    last = await json(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      body: JSON.stringify({ email: 'limited@example.com', password: 'incorrect-password', deviceId: 'desktop' })
+    })
+  }
+  assert.equal(last.response.status, 429)
+})
+
+test('production errors are sanitized and include a correlation ID', async () => {
+  const baseUrl = await start()
+  const response = await fetch(`${baseUrl}/api/sync/records/%/record`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: '{}'
+  })
+  const body = await response.json()
+  assert.equal(response.status, 500)
+  assert.equal(body.error, 'Unexpected backend error.')
+  assert.equal(typeof body.requestId, 'string')
+  assert.equal(JSON.stringify(body).includes('URI malformed'), false)
+})

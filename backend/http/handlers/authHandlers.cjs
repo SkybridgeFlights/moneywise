@@ -1,6 +1,6 @@
 const { passwordAuthSchema, userSessionSchema, refreshSessionSchema } = require('../../domain/schemas.cjs')
 
-function createAuthHandlers({ authService, sendJson }) {
+function createAuthHandlers({ authService, sendJson, loginLimiter }) {
   function mapAuthError(error, response) {
     if (error && typeof error === 'object' && 'code' in error) {
       if (error.code === 'account_exists') {
@@ -35,7 +35,7 @@ function createAuthHandlers({ authService, sendJson }) {
     async register(request, response, body) {
       try {
         const parsed = passwordAuthSchema.parse(body)
-        const session = authService.registerWithPassword(parsed)
+        const session = await authService.registerWithPassword(parsed)
         sendJson(response, 201, session)
       } catch (error) {
         if (mapAuthError(error, response)) {
@@ -47,7 +47,14 @@ function createAuthHandlers({ authService, sendJson }) {
     async login(request, response, body) {
       try {
         const parsed = passwordAuthSchema.parse(body)
-        const session = authService.loginWithPassword(parsed)
+        const key = `${request.socket.remoteAddress ?? 'unknown'}:${parsed.email.toLowerCase()}`
+        const attempt = loginLimiter.consume(key)
+        if (!attempt.allowed) {
+          sendJson(response, 429, { error: 'Too many authentication attempts. Try again later.' })
+          return
+        }
+        const session = await authService.loginWithPassword(parsed)
+        loginLimiter.clear(key)
         sendJson(response, 200, session)
       } catch (error) {
         if (mapAuthError(error, response)) {

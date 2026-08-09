@@ -11,6 +11,8 @@ const { createAuthHandlers } = require('./http/handlers/authHandlers.cjs')
 const { createSyncHandlers } = require('./http/handlers/syncHandlers.cjs')
 const { createRouter } = require('./http/router.cjs')
 const { sendJson } = require('./http/sendJson.cjs')
+const { createRateLimiter } = require('./http/rateLimiter.cjs')
+const { createLogger } = require('./logging.cjs')
 
 function createBackend(runtimeConfig = config) {
   if (runtimeConfig.nodeEnv === 'production' && runtimeConfig.authMode !== 'password-only') {
@@ -23,14 +25,22 @@ function createBackend(runtimeConfig = config) {
   const recordRepository = createRecordRepository(db)
   const authService = createAuthService({ config: runtimeConfig, userRepository, sessionRepository })
   const syncService = createSyncService({ recordRepository })
-  const authHandlers = createAuthHandlers({ authService, sendJson })
+  const logger = createLogger(runtimeConfig.logLevel)
+  const loginLimiter = createRateLimiter({ limit: 8, windowMs: 15 * 60 * 1000 })
+  const requestLimiter = createRateLimiter({ limit: 120, windowMs: 60 * 1000 })
+  const authHandlers = createAuthHandlers({ authService, sendJson, loginLimiter })
   const syncHandlers = createSyncHandlers({ authService, syncService, sendJson })
   const router = createRouter({
     authHandlers,
     syncHandlers,
-    backendInfo: { authMode: runtimeConfig.authMode, database: 'sqlite' }
+    backendInfo: { authMode: runtimeConfig.authMode, database: 'sqlite', nodeEnv: runtimeConfig.nodeEnv },
+    requestLimiter,
+    logger
   })
   const server = http.createServer((request, response) => void router(request, response))
+  server.requestTimeout = 15_000
+  server.headersTimeout = 10_000
+  server.keepAliveTimeout = 5_000
   return { db, server }
 }
 
