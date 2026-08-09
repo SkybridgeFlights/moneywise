@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { SyncStatusSnapshot } from '@shared/contracts'
 import type { FinanceDomainState } from '@shared/domain'
 import { defaultSettings } from '../shared/defaults'
@@ -47,7 +47,7 @@ interface PushConflictRecord {
   deletedAt: string | null
 }
 
-const DEFAULT_CURSOR = '1970-01-01T00:00:00.000Z'
+const DEFAULT_CURSOR = '0'
 const SYNC_ENTITY_SET = new Set<SyncEntityType>(SYNC_ENTITY_ORDER)
 const DEFAULT_SETTINGS_HASH = hashPayload(defaultSettings as unknown as Record<string, unknown>)
 
@@ -742,7 +742,7 @@ export class DesktopSyncManager {
     const localIndex = buildSyncableStateIndex(this.database.getDomainState())
     const forcedChanges: PendingSyncChange[] = []
     const nextManifest = { ...syncState.manifest }
-    let nextCursor = parsed.cursor > (syncState.cursor ?? DEFAULT_CURSOR) ? parsed.cursor : (syncState.cursor ?? DEFAULT_CURSOR)
+    const nextCursor = parsed.cursor
 
     localIndex.keyOrder.forEach((key) => {
       const localRecord = localIndex.records.get(key)
@@ -803,6 +803,7 @@ export class DesktopSyncManager {
         method: 'POST',
         body: JSON.stringify({
           deviceId,
+          requestId: randomUUID(),
           changes: forcedChanges.map((change) => ({
             entityType: change.entityType,
             recordId: change.recordId,
@@ -836,9 +837,6 @@ export class DesktopSyncManager {
         updatedAt: entry.updatedAt,
         deletedAt: entry.deletedAt
       }
-      if (entry.updatedAt > nextCursor) {
-        nextCursor = entry.updatedAt
-      }
     })
 
     parsedPush.conflicts.forEach((entry) => {
@@ -851,9 +849,6 @@ export class DesktopSyncManager {
         remoteVersion: entry.version,
         updatedAt: entry.updatedAt,
         deletedAt: entry.deletedAt
-      }
-      if (entry.updatedAt && entry.updatedAt > nextCursor) {
-        nextCursor = entry.updatedAt
       }
     })
 
@@ -885,6 +880,7 @@ export class DesktopSyncManager {
         method: 'POST',
         body: JSON.stringify({
           deviceId,
+          requestId: randomUUID(),
           changes: pendingChanges.map((change) => ({
             entityType: change.entityType,
             recordId: change.recordId,
@@ -902,7 +898,7 @@ export class DesktopSyncManager {
     const parsed = parsePushResponse(response)
     const refreshedIndex = buildSyncableStateIndex(this.database.getDomainState())
     const nextManifest = { ...syncState.manifest }
-    let nextCursor = syncState.cursor ?? DEFAULT_CURSOR
+    const nextCursor = syncState.cursor ?? DEFAULT_CURSOR
 
     parsed.applied.forEach((entry) => {
       const key = createSyncRecordKey(entry.entityType, entry.recordId)
@@ -913,9 +909,6 @@ export class DesktopSyncManager {
         remoteVersion: entry.version,
         updatedAt: entry.updatedAt,
         deletedAt: entry.deletedAt
-      }
-      if (entry.updatedAt > nextCursor) {
-        nextCursor = entry.updatedAt
       }
     })
 
@@ -929,9 +922,6 @@ export class DesktopSyncManager {
         remoteVersion: entry.version,
         updatedAt: entry.updatedAt,
         deletedAt: entry.deletedAt
-      }
-      if (entry.updatedAt && entry.updatedAt > nextCursor) {
-        nextCursor = entry.updatedAt
       }
     })
 

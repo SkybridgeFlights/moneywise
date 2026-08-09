@@ -18,18 +18,23 @@ function createSyncService({ recordRepository }) {
       const recordsByEntity = recordRepository.bootstrap(userId)
       const latestCursor = recordRepository
         .listByUser(userId)
-        .reduce((latest, record) => (record.updatedAt > latest ? record.updatedAt : latest), '1970-01-01T00:00:00.000Z')
+        .reduce((latest, record) => Math.max(latest, record.revision), 0)
       return {
-        cursor: latestCursor,
+        cursor: String(latestCursor),
         records: recordsByEntity
       }
     },
     bootstrapOrder: BOOTSTRAP_ORDER,
-    getChanges(userId, since) {
-      const changes = recordRepository.listChangesSince(userId, since)
-      const latestCursor = changes.reduce((latest, record) => (record.updatedAt > latest ? record.updatedAt : latest), since)
+    getChanges(userId, since, limit = 200) {
+      const parsedSince = /^\d+$/.test(String(since)) ? Number(since) : 0
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 200, 500))
+      const records = recordRepository.listChangesSince(userId, parsedSince, safeLimit + 1)
+      const hasMore = records.length > safeLimit
+      const changes = hasMore ? records.slice(0, safeLimit) : records
+      const latestCursor = changes.reduce((latest, record) => Math.max(latest, record.revision), parsedSince)
       return {
-        cursor: latestCursor,
+        cursor: String(latestCursor),
+        hasMore,
         changes: changes.map((record) => ({
           entityType: record.entityType,
           recordId: record.recordId,
@@ -38,6 +43,7 @@ function createSyncService({ recordRepository }) {
           updatedAt: record.updatedAt,
           deletedAt: record.deletedAt,
           version: record.version,
+          revision: record.revision,
           lastModifiedByDeviceId: record.lastModifiedByDeviceId
         }))
       }
@@ -51,8 +57,9 @@ function createSyncService({ recordRepository }) {
         }
       }
 
-      const createdAt = current?.createdAt ?? change.updatedAt ?? new Date().toISOString()
-      const updatedAt = change.updatedAt ?? new Date().toISOString()
+      const updatedAt = new Date().toISOString()
+      const createdAt = current?.createdAt ?? updatedAt
+      const revision = recordRepository.nextRevision()
       const nextRecord = recordRepository.upsert({
         syncId: createSyncId(userId, change.entityType, change.recordId),
         userId,
@@ -63,6 +70,7 @@ function createSyncService({ recordRepository }) {
         updatedAt,
         deletedAt: change.deletedAt ?? null,
         version: (current?.version ?? 0) + 1,
+        revision,
         lastModifiedByDeviceId: change.lastModifiedByDeviceId ?? options.deviceId ?? null
       })
 
@@ -85,27 +93,34 @@ function createSyncService({ recordRepository }) {
       )
     },
     pushBatch(userId, payload) {
-      const applied = []
-      const conflicts = []
-      payload.changes.forEach((change) => {
-        const result = this.upsertRecord(userId, change, { deviceId: payload.deviceId })
-        if (result.ok) {
-          applied.push({
+      const replay = recordRepository.findRequest(userId, payload.requestId)
+      if (replay) return replay
+      return recordRepository.transaction(() => {
+        const conflicts = payload.changes.flatMap((change) => {
+          const current = recordRepository.findByUserAndRecord(userId, change.entityType, change.recordId)
+          return typeof change.baseVersion === 'number' && current && current.version !== change.baseVersion
+            ? [{ entityType: change.entityType, recordId: change.recordId, conflict: createConflict(current) }]
+            : []
+        })
+        if (conflicts.length > 0) {
+          const response = { applied: [], conflicts, atomic: true, replayed: false }
+          recordRepository.saveRequest(userId, payload.requestId, response)
+          return response
+        }
+        const applied = payload.changes.map((change) => {
+          const result = this.upsertRecord(userId, change, { deviceId: payload.deviceId })
+          return {
             entityType: result.record.entityType,
             recordId: result.record.recordId,
             version: result.record.version,
             updatedAt: result.record.updatedAt,
             deletedAt: result.record.deletedAt
-          })
-        } else {
-          conflicts.push({
-            entityType: change.entityType,
-            recordId: change.recordId,
-            conflict: result.conflict
-          })
-        }
+          }
+        })
+        const response = { applied, conflicts: [], atomic: true, replayed: false }
+        recordRepository.saveRequest(userId, payload.requestId, response)
+        return response
       })
-      return { applied, conflicts }
     }
   }
 }

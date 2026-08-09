@@ -32,6 +32,7 @@ const syncRecordSchema = z.object({
 
 const syncPushSchema = z.object({
   deviceId: z.string().min(1).max(120),
+  requestId: z.string().min(8).max(120),
   changes: z.array(syncRecordSchema).max(500)
 })
 

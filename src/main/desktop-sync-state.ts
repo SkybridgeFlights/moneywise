@@ -3,6 +3,11 @@ import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { DesktopSyncStateData, SyncManifestEntry } from './sync-types'
 
+export interface TokenProtector {
+  encrypt(value: string): string
+  decrypt(value: string): string
+}
+
 const EMPTY_STATE: DesktopSyncStateData = {
   deviceId: null,
   authToken: null,
@@ -59,14 +64,22 @@ function normalizeState(value: unknown): DesktopSyncStateData {
 }
 
 export class DesktopSyncStateStore {
-  constructor(private readonly filePath: string) {}
+  constructor(private readonly filePath: string, private readonly tokenProtector: TokenProtector) {}
 
   read(): DesktopSyncStateData {
     if (!existsSync(this.filePath)) {
       return { ...EMPTY_STATE }
     }
     try {
-      return normalizeState(JSON.parse(readFileSync(this.filePath, 'utf8')))
+      const raw = JSON.parse(readFileSync(this.filePath, 'utf8')) as Record<string, unknown>
+      const decrypted = {
+        ...raw,
+        authToken: typeof raw.authTokenEncrypted === 'string' ? this.tokenProtector.decrypt(raw.authTokenEncrypted) : raw.authToken,
+        refreshToken: typeof raw.refreshTokenEncrypted === 'string' ? this.tokenProtector.decrypt(raw.refreshTokenEncrypted) : raw.refreshToken
+      }
+      const state = normalizeState(decrypted)
+      if ((raw.authToken || raw.refreshToken) && (state.authToken || state.refreshToken)) this.write(state)
+      return state
     } catch {
       return { ...EMPTY_STATE }
     }
@@ -77,7 +90,12 @@ export class DesktopSyncStateStore {
     if (!existsSync(directory)) {
       mkdirSync(directory, { recursive: true })
     }
-    writeFileSync(this.filePath, JSON.stringify(next, null, 2), 'utf8')
+    const { authToken, refreshToken, ...persisted } = next
+    writeFileSync(this.filePath, JSON.stringify({
+      ...persisted,
+      authTokenEncrypted: authToken ? this.tokenProtector.encrypt(authToken) : null,
+      refreshTokenEncrypted: refreshToken ? this.tokenProtector.encrypt(refreshToken) : null
+    }, null, 2), 'utf8')
     return next
   }
 

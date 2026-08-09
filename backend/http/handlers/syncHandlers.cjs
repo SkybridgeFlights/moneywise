@@ -23,7 +23,8 @@ function createSyncHandlers({ authService, syncService, sendJson }) {
       const principal = requireAuth(request, response)
       if (!principal) return
       const since = url.searchParams.get('since') ?? '1970-01-01T00:00:00.000Z'
-      sendJson(response, 200, syncService.getChanges(principal.user.id, since))
+      const limit = url.searchParams.get('limit') ?? '200'
+      sendJson(response, 200, syncService.getChanges(principal.user.id, since, limit))
     },
     async push(request, response, body) {
       const principal = requireAuth(request, response)

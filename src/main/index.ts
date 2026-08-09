@@ -8,6 +8,7 @@ import { DesktopSyncStateStore } from './desktop-sync-state'
 import { FinanceService } from './finance-service'
 import { registerIpcHandlers } from './ipc'
 import { readDesktopSyncConfigWithDebug } from './sync-config'
+import { createElectronTokenProtector } from './electron-token-protector'
 
 let startupLogPath = ''
 
@@ -111,7 +112,7 @@ app.whenReady().then(() => {
     configured: Boolean(syncConfigDebug.backendUrl),
     deviceConfigured: Boolean(syncConfigDebug.deviceId)
   })
-  const syncStateStore = new DesktopSyncStateStore(join(logDir, 'moneywise', 'sync-state.json'))
+  const syncStateStore = new DesktopSyncStateStore(join(logDir, 'moneywise', 'sync-state.json'), createElectronTokenProtector())
   const syncManager = new DesktopSyncManager(database, syncStateStore, syncConfig, logMain, () => {
     logMain('SYNC PULL RELOAD RENDERER')
     BrowserWindow.getAllWindows().forEach((window) => {

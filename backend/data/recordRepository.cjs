@@ -20,6 +20,7 @@ function mapRecord(row) {
     updatedAt: row.updated_at,
     deletedAt: row.deleted_at,
     version: row.version,
+    revision: row.revision,
     lastModifiedByDeviceId: row.last_modified_by_device_id
   }
 }
@@ -49,9 +50,9 @@ function createRecordRepository(db) {
   `)
   const upsertStatement = sqlite.prepare(`
     INSERT INTO finance_records (
-      sync_id, user_id, entity_type, record_id, payload_json, created_at, updated_at, deleted_at, version, last_modified_by_device_id
+      sync_id, user_id, entity_type, record_id, payload_json, created_at, updated_at, deleted_at, version, last_modified_by_device_id, revision
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(sync_id) DO UPDATE SET
       payload_json = excluded.payload_json,
       created_at = excluded.created_at,
@@ -59,6 +60,7 @@ function createRecordRepository(db) {
       deleted_at = excluded.deleted_at,
       version = excluded.version,
       last_modified_by_device_id = excluded.last_modified_by_device_id
+      ,revision = excluded.revision
   `)
   const listByUserStatement = sqlite.prepare(`
     SELECT * FROM finance_records
@@ -67,9 +69,13 @@ function createRecordRepository(db) {
   `)
   const listChangesSinceStatement = sqlite.prepare(`
     SELECT * FROM finance_records
-    WHERE user_id = ? AND updated_at > ?
-    ORDER BY updated_at ASC, entity_type ASC, record_id ASC
+    WHERE user_id = ? AND revision > ?
+    ORDER BY revision ASC
+    LIMIT ?
   `)
+  const nextRevisionStatement = sqlite.prepare('INSERT INTO sync_revisions DEFAULT VALUES')
+  const findRequestStatement = sqlite.prepare('SELECT response_json FROM sync_requests WHERE user_id = ? AND request_id = ?')
+  const saveRequestStatement = sqlite.prepare('INSERT INTO sync_requests (user_id, request_id, response_json, created_at) VALUES (?, ?, ?, ?)')
 
   return {
     findByUserAndRecord(userId, entityType, recordId) {
@@ -87,17 +93,39 @@ function createRecordRepository(db) {
         record.deletedAt ?? null,
         record.version,
         record.lastModifiedByDeviceId ?? null
+        , record.revision
       )
       return this.findByUserAndRecord(record.userId, record.entityType, record.recordId)
     },
     listByUser(userId) {
       return listByUserStatement.all(userId).map((row) => mapRecord(row))
     },
-    listChangesSince(userId, since) {
-      return listChangesSinceStatement.all(userId, since).map((row) => mapRecord(row))
+    listChangesSince(userId, since, limit = 200) {
+      return listChangesSinceStatement.all(userId, since, limit).map((row) => mapRecord(row))
     },
     bootstrap(userId) {
       return groupBootstrap(this.listByUser(userId))
+    },
+    nextRevision() {
+      return Number(nextRevisionStatement.run().lastInsertRowid)
+    },
+    transaction(callback) {
+      sqlite.exec('BEGIN IMMEDIATE')
+      try {
+        const result = callback()
+        sqlite.exec('COMMIT')
+        return result
+      } catch (error) {
+        sqlite.exec('ROLLBACK')
+        throw error
+      }
+    },
+    findRequest(userId, requestId) {
+      const row = findRequestStatement.get(userId, requestId)
+      return row ? JSON.parse(row.response_json) : null
+    },
+    saveRequest(userId, requestId, response) {
+      saveRequestStatement.run(userId, requestId, JSON.stringify(response), new Date().toISOString())
     }
   }
 }

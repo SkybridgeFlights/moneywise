@@ -36,6 +36,7 @@ function runMigrations(db) {
       updated_at TEXT NOT NULL,
       deleted_at TEXT,
       version INTEGER NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 0,
       last_modified_by_device_id TEXT,
       UNIQUE(user_id, entity_type, record_id),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -46,6 +47,17 @@ function runMigrations(db) {
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_finance_records_user_updated ON finance_records(user_id, updated_at);
     CREATE INDEX IF NOT EXISTS idx_finance_records_user_entity_record ON finance_records(user_id, entity_type, record_id);
+    CREATE TABLE IF NOT EXISTS sync_revisions (
+      revision INTEGER PRIMARY KEY AUTOINCREMENT
+    );
+    CREATE TABLE IF NOT EXISTS sync_requests (
+      user_id TEXT NOT NULL,
+      request_id TEXT NOT NULL,
+      response_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, request_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `)
 
   const authModeColumn = sqlite.prepare("PRAGMA table_info('sessions')").all().some((row) => row.name === 'auth_mode')
@@ -66,6 +78,15 @@ function runMigrations(db) {
     sqlite.exec('ALTER TABLE sessions ADD COLUMN refresh_expires_at TEXT')
   }
   sqlite.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_refresh_token_hash ON sessions(refresh_token_hash) WHERE refresh_token_hash IS NOT NULL')
+  const revisionColumn = sqlite.prepare("PRAGMA table_info('finance_records')").all().some((row) => row.name === 'revision')
+  if (!revisionColumn) {
+    sqlite.exec('ALTER TABLE finance_records ADD COLUMN revision INTEGER NOT NULL DEFAULT 0')
+  }
+  sqlite.exec(`
+    UPDATE finance_records SET revision = rowid WHERE revision = 0;
+    INSERT OR IGNORE INTO sync_revisions(revision) SELECT MAX(revision) FROM finance_records HAVING MAX(revision) > 0;
+    CREATE INDEX IF NOT EXISTS idx_finance_records_user_revision ON finance_records(user_id, revision);
+  `)
 
   const hasUsers = sqlite.prepare('SELECT COUNT(*) AS count FROM users').get().count > 0
   const hasSessions = sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get().count > 0
@@ -89,9 +110,9 @@ function runMigrations(db) {
   `)
   const insertRecord = sqlite.prepare(`
     INSERT OR IGNORE INTO finance_records (
-      sync_id, user_id, entity_type, record_id, payload_json, created_at, updated_at, deleted_at, version, last_modified_by_device_id
+      sync_id, user_id, entity_type, record_id, payload_json, created_at, updated_at, deleted_at, version, last_modified_by_device_id, revision
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
 
   sqlite.exec('BEGIN')
@@ -133,6 +154,7 @@ function runMigrations(db) {
         record.deletedAt ?? null,
         record.version ?? 1,
         record.lastModifiedByDeviceId ?? null
+        , record.revision ?? 0
       )
     })
     sqlite.exec('COMMIT')

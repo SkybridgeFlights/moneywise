@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -130,7 +130,10 @@ function createConfig(): DesktopSyncConfig {
 
 function createStateStore() {
   const dir = mkdtempSync(join(tmpdir(), 'moneywise-sync-test-'))
-  const store = new DesktopSyncStateStore(join(dir, 'sync-state.json'))
+  const store = new DesktopSyncStateStore(join(dir, 'sync-state.json'), {
+    encrypt: (value) => Buffer.from(value, 'utf8').toString('base64'),
+    decrypt: (value) => Buffer.from(value, 'base64').toString('utf8')
+  })
   store.write({
     deviceId: 'desktop-test',
     authToken: 'test-access-token',
@@ -200,6 +203,15 @@ afterEach(() => {
 })
 
 describe('DesktopSyncManager', () => {
+  it('does not persist access or refresh tokens in plaintext', () => {
+    const { dir, store } = createStateStore()
+    cleanupDirs.push(dir)
+    const persisted = readFileSync(join(dir, 'sync-state.json'), 'utf8')
+    expect(persisted).not.toContain('test-access-token')
+    expect(persisted).not.toContain('test-refresh-token')
+    expect(store.read().authToken).toBe('test-access-token')
+  })
+
   it('bootstraps remote data into an empty local state without creating false pending changes after normalization', async () => {
     const database = new FakeFinanceDatabase(createEmptyState(), {
       settings: (payload) => ({
@@ -221,7 +233,7 @@ describe('DesktopSyncManager', () => {
         return {
           body: {
             order: ['settings'],
-            cursor: '2026-04-01T00:00:00.000Z',
+            cursor: '1',
             records: {
               settings: [
                 {
@@ -239,7 +251,7 @@ describe('DesktopSyncManager', () => {
         }
       }
       if (url.includes('/api/sync/changes')) {
-        return { body: { cursor: '2026-04-01T00:00:00.000Z', changes: [] } }
+        return { body: { cursor: '1', changes: [] } }
       }
       if (url.endsWith('/api/sync/push')) {
         return { body: { applied: [], conflicts: [] } }
@@ -251,7 +263,7 @@ describe('DesktopSyncManager', () => {
 
     const savedState = store.read()
     expect(database.getDomainState().settings.language).toBe('ar')
-    expect(savedState.cursor).toBe('2026-04-01T00:00:00.000Z')
+    expect(savedState.cursor).toBe('1')
     expect(savedState.bootstrapCompleted).toBe(true)
     expect((manager as unknown as { collectPendingLocalChanges: (state: FinanceDomainState, manifest: Record<string, unknown>) => unknown[] }).collectPendingLocalChanges(
       database.getDomainState(),
@@ -259,7 +271,7 @@ describe('DesktopSyncManager', () => {
     )).toHaveLength(0)
   })
 
-  it('pushes local records once, advances the cursor, and does not replay duplicates after restart', async () => {
+  it('pushes local records once without replaying duplicates after restart', async () => {
     const state = createEmptyState()
     state.incomes.push({
       id: 'income-local-1',
@@ -281,9 +293,9 @@ describe('DesktopSyncManager', () => {
       requests.push({ url, body })
       if (url.endsWith('/health')) return { body: { ok: true } }
       if (url.endsWith('/api/auth/dev-session')) return { body: { authMode: 'dev-session', token: 'token-2', user: { id: 'user-2', email: 'user-2@example.com' } } }
-      if (url.includes('/api/sync/bootstrap')) return { body: { order: [], cursor: '1970-01-01T00:00:00.000Z', records: {} } }
+      if (url.includes('/api/sync/bootstrap')) return { body: { order: [], cursor: '0', records: {} } }
       if (url.includes('/api/sync/changes')) {
-        const since = new URL(url).searchParams.get('since') ?? '1970-01-01T00:00:00.000Z'
+        const since = new URL(url).searchParams.get('since') ?? '0'
         return { body: { cursor: since, changes: [] } }
       }
       if (url.endsWith('/api/sync/push')) {
@@ -308,7 +320,7 @@ describe('DesktopSyncManager', () => {
     await runSync(manager)
 
     expect(requests.filter((entry) => entry.url.endsWith('/api/sync/push'))).toHaveLength(1)
-    expect(store.read().cursor).toBe('2026-04-02T10:00:00.000Z')
+    expect(store.read().cursor).toBe('0')
 
     requests.length = 0
     const restartedManager = new DesktopSyncManager(database as never, store, createConfig(), () => undefined)
@@ -573,8 +585,8 @@ describe('DesktopSyncManager', () => {
     globalThis.fetch = createFetchMock((url) => {
       if (url.endsWith('/health')) return { body: { ok: true } }
       if (url.endsWith('/api/auth/dev-session')) return { body: { authMode: 'dev-session', token: 'token-5', user: { id: 'user-5', email: 'user-5@example.com' } } }
-      if (url.includes('/api/sync/bootstrap')) return { body: { order: [], cursor: '1970-01-01T00:00:00.000Z', records: {} } }
-      if (url.includes('/api/sync/changes')) return { body: { cursor: '1970-01-01T00:00:00.000Z', changes: [] } }
+      if (url.includes('/api/sync/bootstrap')) return { body: { order: [], cursor: '0', records: {} } }
+      if (url.includes('/api/sync/changes')) return { body: { cursor: '0', changes: [] } }
       if (url.endsWith('/api/sync/push')) {
         return {
           body: {
@@ -597,7 +609,7 @@ describe('DesktopSyncManager', () => {
     const restartedManager = new DesktopSyncManager(database as never, store, createConfig(), () => undefined)
     await runSync(restartedManager)
 
-    expect(store.read().cursor).toBe('2026-04-06T00:00:00.000Z')
+    expect(store.read().cursor).toBe('0')
     expect(store.read().manifest['expense:expense-local']?.remoteVersion).toBe(1)
   })
 
