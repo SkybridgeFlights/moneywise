@@ -238,7 +238,7 @@ describe('DesktopSyncManager', () => {
               settings: [
                 {
                   id: 'settings',
-                  payload: { language: 'ar', currency: 'EUR' },
+                  payload: { ...defaultSettings, language: 'ar', currency: 'EUR', locale: 'ar', rtl: true },
                   createdAt: '2026-04-01T00:00:00.000Z',
                   updatedAt: '2026-04-01T00:00:00.000Z',
                   deletedAt: null,

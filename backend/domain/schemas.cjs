@@ -1,5 +1,6 @@
 const { z } = require('zod')
 const { FINANCE_ENTITY_TYPES } = require('../config/constants.cjs')
+const { financePayloadSchemas } = require('./financeSchemas.cjs')
 
 const entityTypeSchema = z.enum(FINANCE_ENTITY_TYPES)
 
@@ -28,6 +29,12 @@ const syncRecordSchema = z.object({
   deletedAt: z.string().datetime().nullable().optional(),
   lastModifiedByDeviceId: z.string().min(1).max(120).optional(),
   baseVersion: z.number().int().min(0).optional()
+}).superRefine((record, context) => {
+  if (record.deletedAt) return
+  const result = financePayloadSchemas[record.entityType].safeParse(record.payload)
+  if (!result.success) {
+    result.error.issues.forEach((issue) => context.addIssue({ ...issue, path: ['payload', ...issue.path] }))
+  }
 })
 
 const syncPushSchema = z.object({

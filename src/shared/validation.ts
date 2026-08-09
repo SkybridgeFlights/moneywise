@@ -12,8 +12,11 @@ const noteString = z
   .transform((value) => value.replace(/\r\n/g, '\n').trim())
   .pipe(z.string().max(1000))
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
-const monthId = z.string().regex(/^\d{4}-\d{2}$/)
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+}, 'Invalid calendar date')
+const monthId = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/)
 const moneyNumber = z.number().finite().min(0).max(999999999)
 const percentageNumber = z.number().finite().min(0).max(100)
@@ -96,6 +99,9 @@ export const debtInputSchema = z.object({
   recurringAutomatically: z.boolean(),
   categoryId: trimmedString(1, 80),
   notes: noteString
+}).refine((value) => !value.endDate || value.endDate >= value.startDate, {
+  message: 'Debt end date cannot precede its start date',
+  path: ['endDate']
 })
 
 export const categoryInputSchema = z.object({
@@ -152,6 +158,26 @@ export const settingsInputSchema = z.object({
   rtl: z.boolean(),
   balanceCorrection: balanceCorrectionSchema.optional().default(null)
 })
+
+export const monthlySummarySchema = z.object({
+  month: monthId,
+  income: moneyNumber,
+  expenses: moneyNumber,
+  savings: z.number().finite(),
+  debtPayments: moneyNumber,
+  closingBalance: z.number().finite()
+})
+
+export const syncPayloadSchemas = {
+  income: incomeInputSchema,
+  expense: expenseInputSchema,
+  category: categoryInputSchema,
+  budget: budgetPlanInputSchema,
+  goal: goalInputSchema,
+  debt: debtInputSchema,
+  settings: settingsInputSchema,
+  'monthly-summary': monthlySummarySchema
+}
 
 export const exportFormatSchema = z.enum(['json', 'csv', 'xlsx'])
 export const importFormatSchema = exportFormatSchema

@@ -28,7 +28,7 @@ async function request(baseUrl, route, options = {}) {
 }
 
 function change(recordId, baseVersion, updatedAt = '2099-01-01T00:00:00.000Z') {
-  return { entityType: 'expense', recordId, payload: { title: recordId, amount: 10 }, updatedAt, ...(baseVersion === undefined ? {} : { baseVersion }) }
+  return { entityType: 'expense', recordId, payload: { id: recordId, title: recordId, amount: 10, date: '2026-08-09', categoryId: 'misc', paymentMethod: 'card', type: 'variable', recurring: false, notes: '', tags: [], goalId: null, debtId: null, allocationKind: 'spend' }, updatedAt, ...(baseVersion === undefined ? {} : { baseVersion }) }
 }
 
 test('server revisions order identical and future client timestamps without skips across pagination', async () => {
@@ -77,4 +77,18 @@ test('concurrent writes and reconnect from an old cursor retain every change', a
   const reconnected = await request(baseUrl, '/api/sync/changes?since=0', { token })
   assert.deepEqual(reconnected.body.changes.map((entry) => entry.recordId).sort(), ['offline-a', 'offline-b'])
   assert.equal(new Set(reconnected.body.changes.map((entry) => entry.revision)).size, 2)
+})
+
+test('malformed financial payloads and impossible dates are rejected without writes', async () => {
+  const { baseUrl, token } = await fixture()
+  const result = await request(baseUrl, '/api/sync/push', {
+    method: 'POST', token,
+    body: {
+      deviceId: 'test', requestId: 'request-invalid-domain',
+      changes: [{ entityType: 'expense', recordId: 'bad', payload: { id: 'bad', title: 'Bad', amount: -1, date: '2026-99-99', categoryId: 'misc', paymentMethod: 'card', type: 'variable', recurring: false, notes: '', tags: [], goalId: null, debtId: null, allocationKind: 'spend' } }]
+    }
+  })
+  assert.equal(result.status, 400)
+  const bootstrap = await request(baseUrl, '/api/sync/bootstrap', { token })
+  assert.equal(bootstrap.body.records.expense, undefined)
 })

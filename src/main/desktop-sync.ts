@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { SyncStatusSnapshot } from '@shared/contracts'
 import type { FinanceDomainState } from '@shared/domain'
 import { defaultSettings } from '../shared/defaults'
+import { syncPayloadSchemas } from '../shared/validation'
 import type { DesktopSyncConfig } from './sync-config'
 import { DesktopSyncStateStore } from './desktop-sync-state'
 import type { FinanceDatabase } from './database'
@@ -88,13 +89,19 @@ function normalizeRemoteChange(value: unknown, entityTypeOverride?: SyncEntityTy
   if (!entityType || !recordId || !updatedAt || version === null) {
     return null
   }
+  const deletedAt = typeof value.deletedAt === 'string' ? value.deletedAt : null
+  const rawPayload = isRecordObject(value.payload) ? value.payload : {}
+  const payload = deletedAt ? rawPayload : syncPayloadSchemas[entityType].parse({
+    ...rawPayload,
+    ...(entityType === 'settings' ? {} : entityType === 'monthly-summary' ? { month: recordId } : { id: recordId })
+  }) as Record<string, unknown>
   return {
     entityType,
     recordId,
-    payload: isRecordObject(value.payload) ? value.payload : {},
+    payload,
     createdAt: typeof value.createdAt === 'string' ? value.createdAt : null,
     updatedAt,
-    deletedAt: typeof value.deletedAt === 'string' ? value.deletedAt : null,
+    deletedAt,
     version,
     lastModifiedByDeviceId: typeof value.lastModifiedByDeviceId === 'string' ? value.lastModifiedByDeviceId : null
   }
