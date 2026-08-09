@@ -1,6 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
-const { DatabaseSync } = require('node:sqlite')
+const BetterSqlite3 = require('better-sqlite3')
 
 function readLegacyJsonState(filePath) {
   if (!fs.existsSync(filePath)) {
@@ -23,7 +23,7 @@ function readLegacyJsonState(filePath) {
 
 function createDatabase(databasePath) {
   fs.mkdirSync(path.dirname(databasePath), { recursive: true })
-  const sqlite = new DatabaseSync(databasePath)
+  const sqlite = new BetterSqlite3(databasePath)
   sqlite.exec('PRAGMA foreign_keys = ON')
   sqlite.exec('PRAGMA journal_mode = WAL')
   sqlite.exec('PRAGMA busy_timeout = 5000')

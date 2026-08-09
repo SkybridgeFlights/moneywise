@@ -1,5 +1,17 @@
+const path = require('node:path')
+const fs = require('node:fs')
+
 function runMigrations(db) {
   const sqlite = db.sqlite
+  const schemaVersion = sqlite.pragma('user_version', { simple: true })
+  const hasExistingSchema = sqlite.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").get().count > 0
+  if (hasExistingSchema && schemaVersion < 2) {
+    const parsed = path.parse(db.databasePath)
+    const backupPath = path.join(parsed.dir, `${parsed.name}.pre-v2-backup${parsed.ext || '.sqlite'}`)
+    if (!fs.existsSync(backupPath)) {
+      sqlite.prepare('VACUUM INTO ?').run(backupPath)
+    }
+  }
 
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -92,11 +104,13 @@ function runMigrations(db) {
   const hasSessions = sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get().count > 0
   const hasRecords = sqlite.prepare('SELECT COUNT(*) AS count FROM finance_records').get().count > 0
   if (hasUsers || hasSessions || hasRecords) {
+    sqlite.pragma('user_version = 2')
     return
   }
 
   const legacy = db.findLegacyJsonState()
   if (!legacy) {
+    sqlite.pragma('user_version = 2')
     return
   }
 
@@ -158,6 +172,7 @@ function runMigrations(db) {
       )
     })
     sqlite.exec('COMMIT')
+    sqlite.pragma('user_version = 2')
   } catch (error) {
     sqlite.exec('ROLLBACK')
     throw error

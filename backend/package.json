@@ -6,9 +6,11 @@
   "type": "commonjs",
   "scripts": {
     "start": "node index.cjs",
-    "test": "node --test test/*.test.cjs"
+    "test": "node --test test/*.test.cjs",
+    "coverage": "node --experimental-test-coverage --test test/*.test.cjs"
   },
   "dependencies": {
+    "better-sqlite3": "12.11.1",
     "zod": "^3.25.42"
   },
   "engines": {
