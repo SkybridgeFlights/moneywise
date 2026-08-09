@@ -1,6 +1,6 @@
 import { app, BrowserWindow } from 'electron'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { FinanceDatabase } from './database'
 import { DesktopSyncManager } from './desktop-sync'
@@ -19,17 +19,25 @@ function writeStartupLog(line: string): void {
   appendFileSync(startupLogPath, `${new Date().toISOString()} ${line}\n`, 'utf8')
 }
 
+function rotateStartupLog(logPath: string): void {
+  if (!existsSync(logPath) || statSync(logPath).size <= 2 * 1024 * 1024) return
+  const backupPath = `${logPath}.1`
+  if (existsSync(backupPath)) unlinkSync(backupPath)
+  renameSync(logPath, backupPath)
+}
+
 function logMain(message: string, detail?: unknown): void {
   const sanitizedDetail = detail && typeof detail === 'object'
     ? JSON.parse(JSON.stringify(detail, (key, value) => /token|password|secret|deviceId/i.test(key) ? '[redacted]' : value))
     : detail
+  const shouldPersist = !app.isPackaged || /error|exception|rejection|failed|gone/i.test(message)
   if (detail === undefined) {
     if (!app.isPackaged) console.log(`[main] ${message}`)
-    writeStartupLog(`[main] ${message}`)
+    if (shouldPersist) writeStartupLog(`[main] ${message}`)
     return
   }
   if (!app.isPackaged) console.log(`[main] ${message}`, sanitizedDetail)
-  writeStartupLog(`[main] ${message} ${JSON.stringify(sanitizedDetail)}`)
+  if (shouldPersist) writeStartupLog(`[main] ${message} ${JSON.stringify(sanitizedDetail)}`)
 }
 
 function createWindow(): void {
@@ -108,6 +116,7 @@ app.whenReady().then(() => {
     mkdirSync(logDir, { recursive: true })
   }
   startupLogPath = join(logDir, 'startup.log')
+  rotateStartupLog(startupLogPath)
   logMain('Application ready')
   electronApp.setAppUserModelId('com.moneywise.desktop')
   const database = new FinanceDatabase()
