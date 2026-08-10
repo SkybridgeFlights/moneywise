@@ -26,9 +26,19 @@ services:
         generateValue: true
       - key: MONEYWISE_TLS_TERMINATED
         value: true
+      - key: MONEYWISE_TRUSTED_PROXIES
+        value: uniquelocal
       - key: MONEYWISE_BACKUP_DIRECTORY
         value: /data/backups
       - key: MONEYWISE_BACKUP_MAX_AGE_HOURS
         value: 24
       - key: MONEYWISE_BACKUP_INTERVAL_HOURS
         value: 24
+      - key: MONEYWISE_BACKUP_MIN_FREE_MB
+        value: 256
+      - key: MONEYWISE_BACKUP_KEEP_HOURLY_HOURS
+        value: 24
+      - key: MONEYWISE_BACKUP_KEEP_DAILY_DAYS
+        value: 30
+      - key: MONEYWISE_BACKUP_KEEP_WEEKLY_WEEKS
+        value: 12

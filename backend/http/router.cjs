@@ -1,6 +1,7 @@
 const { ZodError } = require('zod')
 const { sendJson } = require('./sendJson.cjs')
 const { readJsonBody } = require('./requestBody.cjs')
+const { resolveRequestContext } = require('./proxy.cjs')
 
 function matchRecordRoute(pathname) {
   const match = pathname.match(/^\/api\/sync\/records\/([^/]+)\/([^/]+)$/)
@@ -17,16 +18,16 @@ function createRouter({ authHandlers, syncHandlers, backendInfo, requestLimiter,
   return async function route(request, response) {
     const url = new URL(request.url, 'http://localhost')
     const requestId = request.headers['x-request-id'] || require('node:crypto').randomUUID()
+    const requestContext = resolveRequestContext(request, backendInfo?.trustedProxies ?? [])
+    request.clientIp = requestContext.clientIp
     if (backendInfo?.requireHttps) {
       response.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
-      const forwardedProtocol = String(request.headers['x-forwarded-proto'] ?? '').split(',')[0].trim().toLowerCase()
-      if (url.pathname !== '/health' && forwardedProtocol !== 'https') {
+      if (url.pathname !== '/health' && !requestContext.secure) {
         sendJson(response, 426, { error: 'HTTPS is required.', requestId })
         return
       }
     }
-    const remoteAddress = request.socket.remoteAddress ?? 'unknown'
-    const rate = requestLimiter.consume(`${remoteAddress}:${url.pathname}`)
+    const rate = requestLimiter.consume(`${requestContext.clientIp}:${url.pathname}`)
     if (!rate.allowed) {
       sendJson(response, 429, { error: 'Too many requests. Try again later.', requestId })
       return
@@ -43,7 +44,8 @@ function createRouter({ authHandlers, syncHandlers, backendInfo, requestLimiter,
           ok: true,
           service: 'moneywise-sync-backend',
           authMode: backendInfo?.authMode ?? 'unknown',
-          database: backendInfo?.database ?? 'unknown'
+          database: backendInfo?.database ?? 'unknown',
+          backup: backendInfo?.backupStatus?.() ?? null
         })
         return
       }

@@ -66,6 +66,11 @@ const config = {
   backupDirectory: path.resolve(process.cwd(), getFirstValue('BACKUP_DIRECTORY', 'MONEYWISE_BACKUP_DIRECTORY') ?? 'backend-data/backups'),
   backupMaxAgeHours: getNumber('MONEYWISE_BACKUP_MAX_AGE_HOURS', 24),
   backupIntervalHours: getNumber('MONEYWISE_BACKUP_INTERVAL_HOURS', 24)
+  ,backupMinimumFreeMb: getNumber('MONEYWISE_BACKUP_MIN_FREE_MB', 256)
+  ,backupHourlyHours: getNumber('MONEYWISE_BACKUP_KEEP_HOURLY_HOURS', 24)
+  ,backupDailyDays: getNumber('MONEYWISE_BACKUP_KEEP_DAILY_DAYS', 30)
+  ,backupWeeklyWeeks: getNumber('MONEYWISE_BACKUP_KEEP_WEEKLY_WEEKS', 12)
+  ,trustedProxies: (getFirstValue('MONEYWISE_TRUSTED_PROXIES') ?? '').split(',').map((value) => value.trim()).filter(Boolean)
 }
 
 if (!['password-only', 'hybrid'].includes(config.authMode)) {
@@ -83,6 +88,9 @@ if (config.nodeEnv === 'production' && (!config.publicBaseUrl || !config.publicB
 if (config.nodeEnv === 'production' && !config.tlsTerminated) {
   throw new Error('Unsafe transport configuration: production requires MONEYWISE_TLS_TERMINATED=true behind the trusted TLS proxy.')
 }
+if (config.nodeEnv === 'production' && config.tlsTerminated && config.trustedProxies.length === 0) {
+  throw new Error('Unsafe proxy configuration: production requires MONEYWISE_TRUSTED_PROXIES.')
+}
 if (config.nodeEnv === 'production' && (config.accessTokenTtlMinutes < 1 || config.accessTokenTtlMinutes > 30)) {
   throw new Error('Unsafe authentication configuration: access token TTL must be between 1 and 30 minutes.')
 }
@@ -94,6 +102,9 @@ if (config.nodeEnv === 'production' && (config.backupMaxAgeHours < 1 || config.b
 }
 if (config.nodeEnv === 'production' && (config.backupIntervalHours < 1 || config.backupIntervalHours > config.backupMaxAgeHours)) {
   throw new Error('Unsafe backup configuration: backup interval must be positive and no greater than maximum backup age.')
+}
+if (config.nodeEnv === 'production' && (config.backupMinimumFreeMb < 64 || config.backupHourlyHours < 1 || config.backupDailyDays < 1 || config.backupWeeklyWeeks < 1)) {
+  throw new Error('Unsafe backup retention configuration.')
 }
 
 module.exports = {

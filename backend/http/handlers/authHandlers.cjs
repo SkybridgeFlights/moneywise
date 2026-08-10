@@ -1,6 +1,6 @@
 const { passwordAuthSchema, userSessionSchema, refreshSessionSchema } = require('../../domain/schemas.cjs')
 
-function createAuthHandlers({ authService, sendJson, loginLimiter }) {
+function createAuthHandlers({ authService, sendJson, loginLimiter, registrationLimiter, globalRegistrationLimiter }) {
   function mapAuthError(error, response) {
     if (error && typeof error === 'object' && 'code' in error) {
       if (error.code === 'account_exists') {
@@ -37,21 +37,33 @@ function createAuthHandlers({ authService, sendJson, loginLimiter }) {
       }
     },
     async register(request, response, body) {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 10_000)
+      request.once('aborted', () => controller.abort())
       try {
         const parsed = passwordAuthSchema.parse(body)
-        const session = await authService.registerWithPassword(parsed)
+        const clientIp = request.clientIp ?? request.socket.remoteAddress ?? 'unknown'
+        const perClient = registrationLimiter.consume(clientIp)
+        const global = globalRegistrationLimiter.consume('global')
+        if (!perClient.allowed || !global.allowed) {
+          sendJson(response, 429, { error: 'Too many registration attempts. Try again later.' })
+          return
+        }
+        const session = await authService.registerWithPassword(parsed, controller.signal)
         sendJson(response, 201, session)
       } catch (error) {
         if (mapAuthError(error, response)) {
           return
         }
         throw error
+      } finally {
+        clearTimeout(timeout)
       }
     },
     async login(request, response, body) {
       try {
         const parsed = passwordAuthSchema.parse(body)
-        const key = `${request.socket.remoteAddress ?? 'unknown'}:${parsed.email.toLowerCase()}`
+        const key = `${request.clientIp ?? request.socket.remoteAddress ?? 'unknown'}:${parsed.email.toLowerCase()}`
         const attempt = loginLimiter.consume(key)
         if (!attempt.allowed) {
           sendJson(response, 429, { error: 'Too many authentication attempts. Try again later.' })

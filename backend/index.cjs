@@ -1,4 +1,6 @@
 const http = require('node:http')
+const fs = require('node:fs')
+const path = require('node:path')
 const { config } = require('./config/env.cjs')
 const { createDatabase } = require('./data/sqlite.cjs')
 const { runMigrations } = require('./data/migrations.cjs')
@@ -14,37 +16,55 @@ const { sendJson } = require('./http/sendJson.cjs')
 const { createRateLimiter } = require('./http/rateLimiter.cjs')
 const { createLogger } = require('./logging.cjs')
 const { startBackupScheduler } = require('./operations/backupScheduler.cjs')
+const { getBackupStatus } = require('./operations/backups.cjs')
 
 function createBackend(runtimeConfig = config) {
   if (runtimeConfig.nodeEnv === 'production' && runtimeConfig.authMode !== 'password-only') {
     throw new Error('Unsafe authentication configuration: production requires password-only authentication.')
   }
+  if (runtimeConfig.nodeEnv === 'production' && runtimeConfig.tlsTerminated === true && !(runtimeConfig.trustedProxies?.length > 0)) {
+    throw new Error('Unsafe proxy configuration: production TLS termination requires trusted proxies.')
+  }
   const db = createDatabase(runtimeConfig.databasePath)
-  runMigrations(db)
+  const activityLockPath = `${runtimeConfig.databasePath}.backend.lock`
+  fs.writeFileSync(activityLockPath, String(process.pid), { flag: 'wx' })
+  try {
+    runMigrations(db)
+  } catch (error) {
+    db.sqlite.close()
+    if (fs.existsSync(activityLockPath)) fs.unlinkSync(activityLockPath)
+    throw error
+  }
   const userRepository = createUserRepository(db)
   const sessionRepository = createSessionRepository(db)
   const recordRepository = createRecordRepository(db)
   const authService = createAuthService({ config: runtimeConfig, userRepository, sessionRepository })
   const syncService = createSyncService({ recordRepository })
   const logger = createLogger(runtimeConfig.logLevel)
+  const backupDirectory = runtimeConfig.backupDirectory ?? path.join(path.dirname(runtimeConfig.databasePath), 'backups')
   const backupScheduler = startBackupScheduler({
     databasePath: runtimeConfig.databasePath,
-    backupDirectory: runtimeConfig.backupDirectory,
+    backupDirectory,
     intervalHours: runtimeConfig.backupIntervalHours,
+    minimumFreeBytes: (runtimeConfig.backupMinimumFreeMb ?? 256) * 1024 * 1024,
+    retentionPolicy: { hourlyHours: runtimeConfig.backupHourlyHours ?? 24, dailyDays: runtimeConfig.backupDailyDays ?? 30, weeklyWeeks: runtimeConfig.backupWeeklyWeeks ?? 12 },
     logger
   })
   const loginLimiter = createRateLimiter({ limit: 8, windowMs: 15 * 60 * 1000 })
   const requestLimiter = createRateLimiter({ limit: 120, windowMs: 60 * 1000 })
-  const authHandlers = createAuthHandlers({ authService, sendJson, loginLimiter })
+  const registrationLimiter = createRateLimiter({ limit: 5, windowMs: 60 * 60 * 1000, maxKeys: 10_000 })
+  const globalRegistrationLimiter = createRateLimiter({ limit: 100, windowMs: 60 * 60 * 1000, maxKeys: 1 })
+  const authHandlers = createAuthHandlers({ authService, sendJson, loginLimiter, registrationLimiter, globalRegistrationLimiter })
   const syncHandlers = createSyncHandlers({ authService, syncService, sendJson })
   const router = createRouter({
     authHandlers,
     syncHandlers,
-    backendInfo: { authMode: runtimeConfig.authMode, database: 'sqlite', nodeEnv: runtimeConfig.nodeEnv, requireHttps: runtimeConfig.tlsTerminated === true },
+    backendInfo: { authMode: runtimeConfig.authMode, database: 'sqlite', nodeEnv: runtimeConfig.nodeEnv, requireHttps: runtimeConfig.tlsTerminated === true, trustedProxies: runtimeConfig.trustedProxies ?? [], backupStatus: () => getBackupStatus(backupDirectory) },
     requestLimiter,
     logger
   })
   const server = http.createServer((request, response) => void router(request, response))
+  server.on('close', () => { if (fs.existsSync(activityLockPath)) fs.unlinkSync(activityLockPath) })
   server.requestTimeout = 15_000
   server.headersTimeout = 10_000
   server.keepAliveTimeout = 5_000

@@ -21,11 +21,11 @@ function addMinutes(minutes) {
   return new Date(Date.now() + minutes * 60 * 1000).toISOString()
 }
 
-async function hashPassword(password) {
+async function hashPassword(password, signal) {
   const salt = crypto.randomBytes(16).toString('hex')
   const derivedKey = await passwordWorkQueue.run(() => new Promise((resolve, reject) => {
     crypto.scrypt(password, salt, 64, (error, key) => error ? reject(error) : resolve(key))
-  }))
+  }), signal)
   const encoded = derivedKey.toString('hex')
   return `scrypt:${salt}:${encoded}`
 }
@@ -122,7 +122,7 @@ function createAuthService({ config, userRepository, sessionRepository }) {
       }
       return issueSession(user, input, 'dev-session')
     },
-    async registerWithPassword(input) {
+    async registerWithPassword(input, signal) {
       const now = new Date().toISOString()
       const email = input.email.toLowerCase()
       const existing = userRepository.findByEmail(email)
@@ -132,7 +132,7 @@ function createAuthService({ config, userRepository, sessionRepository }) {
         throw error
       }
 
-      const passwordHash = await hashPassword(input.password)
+      const passwordHash = await hashPassword(input.password, signal)
       const user = userRepository.create({
         id: createId('user'),
         email,

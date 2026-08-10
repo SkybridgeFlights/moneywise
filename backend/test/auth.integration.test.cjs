@@ -38,7 +38,7 @@ async function start(authMode = 'password-only', nodeEnv = 'production') {
 
 async function startWithHttpsEnforcement() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'moneywise-https-test-'))
-  const backend = createBackend({ nodeEnv: 'production', host: '127.0.0.1', port: 0, databasePath: path.join(directory, 'test.sqlite'), sessionTtlDays: 30, accessTokenTtlMinutes: 15, authMode: 'password-only', logLevel: 'silent', authSecret: 'integration-test-secret-that-is-not-production', tlsTerminated: true })
+  const backend = createBackend({ nodeEnv: 'production', host: '127.0.0.1', port: 0, databasePath: path.join(directory, 'test.sqlite'), sessionTtlDays: 30, accessTokenTtlMinutes: 15, authMode: 'password-only', logLevel: 'silent', authSecret: 'integration-test-secret-that-is-not-production', tlsTerminated: true, trustedProxies: ['loopback'] })
   await new Promise((resolve) => backend.server.listen(0, '127.0.0.1', resolve))
   cleanup.push(async () => { await new Promise((resolve) => backend.server.close(resolve)); backend.db.sqlite.close(); fs.rmSync(directory, { recursive: true, force: true }) })
   return `http://127.0.0.1:${backend.server.address().port}`
@@ -86,7 +86,7 @@ test('environment loader requires HTTPS termination and a canonical production U
 
   const valid = spawnSync(process.execPath, ['-e', "require('./config/env.cjs')"], {
     cwd: path.resolve(__dirname, '..'),
-    env: { ...baseEnvironment, PUBLIC_BASE_URL: 'https://sync.example.test', MONEYWISE_TLS_TERMINATED: 'true' },
+    env: { ...baseEnvironment, PUBLIC_BASE_URL: 'https://sync.example.test', MONEYWISE_TLS_TERMINATED: 'true', MONEYWISE_TRUSTED_PROXIES: 'loopback' },
     encoding: 'utf8'
   })
   assert.equal(valid.status, 0, valid.stderr)
@@ -249,6 +249,18 @@ test('registration never takes ownership of an existing normal or inactive passw
   })
   assert.equal(normalClaim.response.status, 409)
 
+})
+
+test('public registration is rate limited independently of login', async () => {
+  const baseUrl = await start()
+  let result
+  for (let index = 0; index < 6; index += 1) {
+    result = await json(`${baseUrl}/api/auth/register`, {
+      method: 'POST', body: JSON.stringify({ email: `registration-load-${index}@example.com`, password: 'legitimate-secure-password', deviceId: 'load-test' })
+    })
+  }
+  assert.equal(result.response.status, 429)
+  assert.match(result.body.error, /registration attempts/i)
 })
 
 test('oversized request bodies are rejected before parsing', async () => {
