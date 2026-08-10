@@ -24,7 +24,8 @@ function quarantineSidecars(target, directory, label) {
     const source = `${target}${suffix}`
     if (!fs.existsSync(source)) continue
     const destination = path.join(directory, `${path.basename(target)}.${label}${suffix}`)
-    fs.renameSync(source, destination)
+    if (fs.existsSync(destination)) fs.unlinkSync(source)
+    else fs.renameSync(source, destination)
     moved.push(destination)
   }
   return moved
@@ -40,6 +41,7 @@ function safeRestore({ source, target, expectedSchemaVersion = 2, injectFailure 
   const replaced = `${target}.replaced-${stamp}`
   const sidecarDirectory = `${target}.restore-sidecars-${stamp}`
   let activated = false
+  let replacementStarted = false
   try {
     verifyBackup(source, Number.MAX_SAFE_INTEGER)
     fs.mkdirSync(path.dirname(target), { recursive: true })
@@ -47,15 +49,27 @@ function safeRestore({ source, target, expectedSchemaVersion = 2, injectFailure 
     validateRestoredDatabase(temporary, expectedSchemaVersion)
     injectFailure?.('temporary-verified')
     if (!fs.existsSync(target)) throw new Error('Restore target is missing; refusing to initialize an empty database implicitly.')
-    quarantineSidecars(target, sidecarDirectory, 'old')
+
+    // Preserve sidecars before SQLite inspects them. Invalid/stale sidecars may
+    // be discarded by SQLite, while a valid WAL remains attached for snapshot.
+    fs.mkdirSync(sidecarDirectory, { recursive: true })
+    for (const suffix of ['-wal', '-shm']) {
+      const sidecar = `${target}${suffix}`
+      if (fs.existsSync(sidecar)) fs.copyFileSync(sidecar, path.join(sidecarDirectory, `${path.basename(target)}.old${suffix}`), fs.constants.COPYFILE_EXCL)
+    }
+
+    // Open the live generation while its WAL is still attached. VACUUM INTO reads
+    // one consistent SQLite snapshot, including committed pages currently in WAL.
     const current = new BetterSqlite3(target, { fileMustExist: true })
     try {
-      current.pragma('wal_checkpoint(TRUNCATE)')
       current.prepare('VACUUM INTO ?').run(rollback)
     } finally { current.close() }
-    assertHealthyDatabase(rollback)
+    validateRestoredDatabase(rollback, expectedSchemaVersion)
     injectFailure?.('rollback-verified')
+    quarantineSidecars(target, sidecarDirectory, 'old')
     fs.renameSync(target, replaced)
+    replacementStarted = true
+    injectFailure?.('target-replaced')
     fs.renameSync(temporary, target)
     activated = true
     injectFailure?.('activated')
@@ -64,10 +78,13 @@ function safeRestore({ source, target, expectedSchemaVersion = 2, injectFailure 
     return { target, rollback, sidecarDirectory }
   } catch (error) {
     if (fs.existsSync(temporary)) fs.unlinkSync(temporary)
-    if (activated) {
+    if (activated || replacementStarted) {
       for (const suffix of ['', '-wal', '-shm']) if (fs.existsSync(`${target}${suffix}`)) fs.unlinkSync(`${target}${suffix}`)
       if (fs.existsSync(rollback)) {
-        fs.renameSync(rollback, target)
+        const recovery = `${target}.rollback-recovery-${stamp}`
+        fs.copyFileSync(rollback, recovery, fs.constants.COPYFILE_EXCL)
+        validateRestoredDatabase(recovery, expectedSchemaVersion)
+        fs.renameSync(recovery, target)
         validateRestoredDatabase(target, expectedSchemaVersion)
       }
     }

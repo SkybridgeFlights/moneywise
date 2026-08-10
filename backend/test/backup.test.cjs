@@ -3,12 +3,33 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const { spawn } = require('node:child_process')
 const BetterSqlite3 = require('better-sqlite3')
 const { createDatabase } = require('../data/sqlite.cjs')
 const { runMigrations } = require('../data/migrations.cjs')
 const { applyRetention, createBackup, findLatestBackup, getBackupStatus, verifyBackup } = require('../operations/backups.cjs')
 const { startBackupScheduler } = require('../operations/backupScheduler.cjs')
 const { safeRestore } = require('../operations/restore.cjs')
+
+async function createCommittedWalOnlyRecord(databasePath) {
+  const childScript = `
+    const Database = require('better-sqlite3')
+    const db = new Database(${JSON.stringify(databasePath)})
+    db.pragma('journal_mode = WAL')
+    db.pragma('wal_autocheckpoint = 0')
+    db.prepare('INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)').run('wal-user', 'wal@example.test', 'hash', 'active', '2026-08-10', '2026-08-10')
+    db.prepare('INSERT INTO finance_records (sync_id, user_id, entity_type, record_id, payload_json, created_at, updated_at, deleted_at, version, revision, last_modified_by_device_id) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)').run('wal-sync', 'wal-user', 'income', 'wal-only-income', JSON.stringify({ name: 'Committed WAL salary', amount: 4321 }), '2026-08-10', '2026-08-10', 1, 1, 'crashed-writer')
+    process.stdout.write('committed\\n')
+    setInterval(() => {}, 1000)
+  `
+  const child = spawn(process.execPath, ['-e', childScript], { cwd: path.resolve(__dirname, '..'), stdio: ['ignore', 'pipe', 'inherit'] })
+  await new Promise((resolve, reject) => {
+    child.once('error', reject)
+    child.stdout.once('data', resolve)
+  })
+  child.kill('SIGKILL')
+  await new Promise((resolve) => child.once('exit', resolve))
+}
 
 async function waitFor(predicate, timeoutMs = 2000) {
   const deadline = Date.now() + timeoutMs
@@ -123,5 +144,44 @@ test('restore quarantines stale WAL/SHM and rolls back after failed post-activat
   assert.throws(() => safeRestore({ source: rollbackSource.backupPath, target, injectFailure: (step) => { if (step === 'activated') throw new Error('injected reopen failure') } }), /injected reopen failure/)
   opened = new BetterSqlite3(target, { readonly: true }); assert.equal(opened.prepare('SELECT email FROM users').get().email, 'new@example.test'); opened.close()
   assert.ok(fs.existsSync(restored.rollback))
+
+  assert.throws(() => safeRestore({ source: rollbackSource.backupPath, target, injectFailure: (step) => { if (step === 'target-replaced') throw new Error('injected activation interruption') } }), /injected activation interruption/)
+  opened = new BetterSqlite3(target, { readonly: true }); assert.equal(opened.prepare('SELECT email FROM users').get().email, 'new@example.test'); opened.close()
+  fs.rmSync(directory, { recursive: true, force: true })
+})
+
+test('failed restore preserves a committed financial record that exists only in the authoritative WAL', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'moneywise-wal-restore-test-'))
+  const target = path.join(directory, 'live.sqlite')
+  const source = path.join(directory, 'source.sqlite')
+  const live = createDatabase(target); runMigrations(live); live.sqlite.pragma('wal_checkpoint(TRUNCATE)'); live.sqlite.close()
+  const incoming = createDatabase(source); runMigrations(incoming); incoming.sqlite.close()
+  const backup = await createBackup(source, path.join(directory, 'backups'))
+
+  await createCommittedWalOnlyRecord(target)
+  assert.ok(fs.existsSync(`${target}-wal`), 'the crash fixture must leave a WAL')
+  assert.ok(fs.statSync(`${target}-wal`).size > 0, 'the WAL must be non-empty')
+  let authoritative = new BetterSqlite3(target, { readonly: true, fileMustExist: true })
+  assert.equal(authoritative.prepare('SELECT record_id FROM finance_records WHERE record_id = ?').get('wal-only-income').record_id, 'wal-only-income')
+  authoritative.close()
+
+  const mainOnly = path.join(directory, 'main-only.sqlite')
+  fs.copyFileSync(target, mainOnly)
+  const isolatedMain = new BetterSqlite3(mainOnly, { readonly: true, fileMustExist: true })
+  assert.equal(isolatedMain.prepare('SELECT COUNT(*) AS count FROM finance_records WHERE record_id = ?').get('wal-only-income').count, 0)
+  isolatedMain.close()
+
+  for (const failureStep of ['rollback-verified', 'target-replaced', 'activated']) {
+    assert.throws(() => safeRestore({
+      source: backup.backupPath,
+      target,
+      injectFailure: (step) => { if (step === failureStep) throw new Error(`injected failure at ${failureStep}`) }
+    }), new RegExp(`injected failure at ${failureStep}`))
+
+    authoritative = new BetterSqlite3(target, { readonly: true, fileMustExist: true })
+    const preserved = authoritative.prepare('SELECT payload_json FROM finance_records WHERE record_id = ?').get('wal-only-income')
+    authoritative.close()
+    assert.equal(JSON.parse(preserved.payload_json).name, 'Committed WAL salary', `committed WAL record was lost after ${failureStep}`)
+  }
   fs.rmSync(directory, { recursive: true, force: true })
 })
