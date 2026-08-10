@@ -361,6 +361,7 @@ export class DesktopSyncManager {
   }
 
   async logout(): Promise<SyncStatusSnapshot> {
+    await this.stopAccountActivity()
     const current = this.stateStore.read()
     if (current.authToken) {
       try {
@@ -377,12 +378,11 @@ export class DesktopSyncManager {
       userId: null,
       accountEmail: null,
       authMode: null,
-      cursor: null,
-      bootstrapCompleted: false,
-      lastSyncAt: null,
       lastError: null,
-      manifest: {}
+      paused: true
     })
+    this.database.switchAccountProfile(null)
+    this.stateStore.switchAccount(null)
     this.phase = this.config.enabled ? 'idle' : 'disabled'
     return this.getStatus()
   }
@@ -576,6 +576,7 @@ export class DesktopSyncManager {
 
   private async authenticate(path: '/api/auth/login' | '/api/auth/register', email: string, password: string): Promise<SyncStatusSnapshot> {
     if (!this.config.enabled || !this.config.backendUrl) throw new Error('Sync backend is not configured.')
+    await this.stopAccountActivity()
     const deviceId = this.stateStore.getOrCreateDeviceId(this.config.deviceId)
     const response = await this.requestJson(path, {
       method: 'POST',
@@ -583,7 +584,8 @@ export class DesktopSyncManager {
     })
     const parsed = parseSessionResponse(response)
     if (!parsed) throw new Error('Sync backend returned an invalid session response.')
-    const current = this.stateStore.read()
+    this.database.switchAccountProfile(parsed.userId)
+    const current = this.stateStore.switchAccount(parsed.userId)
     this.stateStore.write({
       ...current,
       authToken: parsed.accessToken,
@@ -592,14 +594,20 @@ export class DesktopSyncManager {
       userId: parsed.userId,
       accountEmail: parsed.email,
       authMode: 'password',
-      cursor: null,
-      bootstrapCompleted: false,
-      lastSyncAt: null,
       lastError: null,
-      manifest: {}
+      paused: false
     })
     this.phase = 'idle'
     return this.getStatus()
+  }
+
+  private async stopAccountActivity(): Promise<void> {
+    if (this.syncTimer) {
+      clearTimeout(this.syncTimer)
+      this.syncTimer = null
+    }
+    this.syncQueued = false
+    if (this.activeSync) await this.activeSync.catch(() => undefined)
   }
 
   private async bootstrap(syncState: DesktopSyncStateData): Promise<DesktopSyncStateData> {

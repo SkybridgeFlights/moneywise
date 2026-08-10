@@ -67,10 +67,26 @@ function collectionKey(entityType: SyncEntityType): SyncableCollectionKey | null
 }
 
 class FakeFinanceDatabase {
+  private activeProfile = 'test-user'
+  private readonly profiles = new Map<string, FinanceDomainState>()
+
   constructor(
-    private readonly state: FinanceDomainState,
+    state: FinanceDomainState,
     private readonly transformers: Partial<Record<SyncEntityType, (payload: Record<string, unknown>) => Record<string, unknown>>> = {}
-  ) {}
+  ) {
+    this.profiles.set(this.activeProfile, state)
+  }
+
+  private get state(): FinanceDomainState {
+    const state = this.profiles.get(this.activeProfile)
+    if (!state) throw new Error(`Missing fake profile ${this.activeProfile}`)
+    return state
+  }
+
+  switchAccountProfile(userId: string | null): void {
+    this.activeProfile = userId ?? 'local-only'
+    if (!this.profiles.has(this.activeProfile)) this.profiles.set(this.activeProfile, createEmptyState())
+  }
 
   getDomainState(): FinanceDomainState {
     return cloneState(this.state)
@@ -210,6 +226,67 @@ describe('DesktopSyncManager', () => {
     expect(persisted).not.toContain('test-access-token')
     expect(persisted).not.toContain('test-refresh-token')
     expect(store.read().authToken).toBe('test-access-token')
+  })
+
+  it('does not upload the previous account local records after switching accounts', async () => {
+    const state = createEmptyState()
+    state.incomes.push({
+      id: 'user-a-private-income',
+      name: 'User A private salary',
+      groupName: 'Primary',
+      amount: 5000,
+      date: '2026-08-01',
+      type: 'fixed',
+      recurring: false,
+      notes: ''
+    })
+    const database = new FakeFinanceDatabase(state)
+    const { dir, store } = createStateStore()
+    cleanupDirs.push(dir)
+    const pushedRecordIds: string[] = []
+
+    globalThis.fetch = createFetchMock((url, init) => {
+      if (url.endsWith('/api/auth/login')) {
+        const credentials = JSON.parse(String(init?.body)) as { email: string }
+        const isUserA = credentials.email === 'user-a@example.com'
+        return {
+          body: {
+            authMode: 'password',
+            accessToken: isUserA ? 'user-a-access' : 'user-b-access',
+            refreshToken: isUserA ? 'user-a-refresh' : 'user-b-refresh',
+            session: { expiresAt: '2099-01-01T00:00:00.000Z' },
+            user: { id: isUserA ? 'test-user' : 'user-b', email: credentials.email }
+          }
+        }
+      }
+      if (url.endsWith('/health')) return { body: { ok: true } }
+      if (url.endsWith('/api/sync/bootstrap')) return { body: { order: [], cursor: '0', records: {} } }
+      if (url.includes('/api/sync/changes')) return { body: { cursor: '0', changes: [], hasMore: false } }
+      if (url.endsWith('/api/sync/push')) {
+        const body = JSON.parse(String(init?.body)) as { changes: Array<{ recordId: string }> }
+        pushedRecordIds.push(...body.changes.map((change) => change.recordId))
+        return {
+          body: {
+            applied: body.changes.map((change) => ({
+              entityType: 'income', recordId: change.recordId, version: 1,
+              updatedAt: '2026-08-10T00:00:00.000Z', deletedAt: null
+            })),
+            conflicts: []
+          }
+        }
+      }
+      throw new Error(`Unhandled URL: ${url}`)
+    }) as typeof fetch
+
+    const manager = new DesktopSyncManager(database as never, store, createConfig(), () => undefined)
+    await manager.login('user-b@example.com', 'user-b-password')
+    await runSync(manager)
+
+    expect(pushedRecordIds).not.toContain('user-a-private-income')
+    expect(database.getDomainState().incomes).toHaveLength(0)
+
+    await manager.login('user-a@example.com', 'user-a-password')
+    expect(database.getDomainState().incomes.map((record) => record.id)).toContain('user-a-private-income')
   })
 
   it('bootstraps remote data into an empty local state without creating false pending changes after normalization', async () => {

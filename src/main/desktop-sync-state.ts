@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { basename, dirname, join } from 'node:path'
 import type { DesktopSyncStateData, SyncManifestEntry } from './sync-types'
 
 export interface TokenProtector {
@@ -64,21 +64,84 @@ function normalizeState(value: unknown): DesktopSyncStateData {
 }
 
 export class DesktopSyncStateStore {
-  constructor(private readonly filePath: string, private readonly tokenProtector: TokenProtector) {}
+  private activeFilePath: string
+  private readonly legacyFilePath: string
+  private readonly metadataPath: string
+
+  constructor(filePath: string, private readonly tokenProtector: TokenProtector) {
+    this.legacyFilePath = filePath
+    this.metadataPath = join(dirname(filePath), 'profile-state.v2.json')
+    this.activeFilePath = filePath
+    const legacy = this.readFile(filePath)
+    if (!existsSync(this.metadataPath) && legacy.userId) {
+      const profilePath = this.profilePath(legacy.userId)
+      if (!existsSync(profilePath)) this.writeFile(profilePath, legacy)
+      this.writeMetadata(legacy.userId)
+    } else if (!existsSync(this.metadataPath)) {
+      this.writeMetadata(null)
+      if (!existsSync(this.legacyFilePath)) {
+        const directory = dirname(this.legacyFilePath)
+        if (!existsSync(directory)) mkdirSync(directory, { recursive: true })
+        writeFileSync(this.legacyFilePath, JSON.stringify({ version: 2, state: 'unscoped-quarantined' }, null, 2), 'utf8')
+      }
+    }
+    const activeUserId = this.readMetadata()
+    this.activeFilePath = activeUserId ? this.profilePath(activeUserId) : this.localOnlyPath()
+  }
+
+  private profileId(userId: string): string {
+    return createHash('sha256').update(`moneywise-desktop-profile:${userId}`).digest('hex')
+  }
+
+  private profilePath(userId: string): string {
+    return join(dirname(this.legacyFilePath), 'profiles', this.profileId(userId), basename(this.legacyFilePath))
+  }
+
+  private localOnlyPath(): string {
+    return join(dirname(this.legacyFilePath), 'quarantine', 'unscoped-sync-state.json')
+  }
+
+  getActiveUserId(): string | null {
+    return this.read().userId
+  }
+
+  switchAccount(userId: string | null): DesktopSyncStateData {
+    this.writeMetadata(userId)
+    this.activeFilePath = userId ? this.profilePath(userId) : this.localOnlyPath()
+    return this.read()
+  }
+
+  private readMetadata(): string | null {
+    try {
+      const value = JSON.parse(readFileSync(this.metadataPath, 'utf8')) as { activeUserId?: unknown }
+      return typeof value.activeUserId === 'string' ? value.activeUserId : null
+    } catch {
+      return null
+    }
+  }
+
+  private writeMetadata(userId: string | null): void {
+    const directory = dirname(this.metadataPath)
+    if (!existsSync(directory)) mkdirSync(directory, { recursive: true })
+    writeFileSync(this.metadataPath, JSON.stringify({ version: 2, activeUserId: userId }, null, 2), 'utf8')
+  }
 
   read(): DesktopSyncStateData {
-    if (!existsSync(this.filePath)) {
+    return this.readFile(this.activeFilePath)
+  }
+
+  private readFile(filePath: string): DesktopSyncStateData {
+    if (!existsSync(filePath)) {
       return { ...EMPTY_STATE }
     }
     try {
-      const raw = JSON.parse(readFileSync(this.filePath, 'utf8')) as Record<string, unknown>
+      const raw = JSON.parse(readFileSync(filePath, 'utf8')) as Record<string, unknown>
       const decrypted = {
         ...raw,
         authToken: typeof raw.authTokenEncrypted === 'string' ? this.tokenProtector.decrypt(raw.authTokenEncrypted) : raw.authToken,
         refreshToken: typeof raw.refreshTokenEncrypted === 'string' ? this.tokenProtector.decrypt(raw.refreshTokenEncrypted) : raw.refreshToken
       }
       const state = normalizeState(decrypted)
-      if ((raw.authToken || raw.refreshToken) && (state.authToken || state.refreshToken)) this.write(state)
       return state
     } catch {
       return { ...EMPTY_STATE }
@@ -86,12 +149,16 @@ export class DesktopSyncStateStore {
   }
 
   write(next: DesktopSyncStateData): DesktopSyncStateData {
-    const directory = dirname(this.filePath)
+    return this.writeFile(this.activeFilePath, next)
+  }
+
+  private writeFile(filePath: string, next: DesktopSyncStateData): DesktopSyncStateData {
+    const directory = dirname(filePath)
     if (!existsSync(directory)) {
       mkdirSync(directory, { recursive: true })
     }
     const { authToken, refreshToken, ...persisted } = next
-    writeFileSync(this.filePath, JSON.stringify({
+    writeFileSync(filePath, JSON.stringify({
       ...persisted,
       authTokenEncrypted: authToken ? this.tokenProtector.encrypt(authToken) : null,
       refreshTokenEncrypted: refreshToken ? this.tokenProtector.encrypt(refreshToken) : null

@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3'
 import { addDays, addMonths, differenceInCalendarDays, differenceInMonths, format, parseISO } from 'date-fns'
 import { app } from 'electron'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import Papa from 'papaparse'
 import ExcelJS from 'exceljs'
@@ -85,25 +86,94 @@ const DEFAULT_FALLBACK_CATEGORY_ID = 'misc'
 
 export class FinanceDatabase implements FinanceRepository {
   private db: any
-  private readonly dbPath: string
+  private dbPath: string
+  private readonly dataDir: string
   readonly capabilities = {
     localPersistence: true as const,
     remoteSync: false,
     conflictDetection: false
   }
 
-  constructor() {
-    const dataDir = join(app.getPath('userData'), 'moneywise')
-    if (!existsSync(dataDir)) {
-      mkdirSync(dataDir, { recursive: true })
+  constructor(initialUserId: string | null = null) {
+    this.dataDir = join(app.getPath('userData'), 'moneywise')
+    if (!existsSync(this.dataDir)) {
+      mkdirSync(this.dataDir, { recursive: true })
     }
-    this.dbPath = join(dataDir, 'moneywise.sqlite')
+    this.migrateLegacyDatabase(initialUserId)
+    this.dbPath = this.profileDatabasePath(initialUserId)
+    this.openDatabase()
+  }
+
+  private profileId(userId: string): string {
+    return createHash('sha256').update(`moneywise-desktop-profile:${userId}`).digest('hex')
+  }
+
+  private profileDatabasePath(userId: string | null): string {
+    const directory = userId
+      ? join(this.dataDir, 'profiles', this.profileId(userId))
+      : join(this.dataDir, 'quarantine')
+    mkdirSync(directory, { recursive: true })
+    return join(directory, userId ? 'moneywise.sqlite' : 'unscoped-local.sqlite')
+  }
+
+  private migrateLegacyDatabase(ownerUserId: string | null): void {
+    const legacyPath = join(this.dataDir, 'moneywise.sqlite')
+    if (!existsSync(legacyPath)) return
+    const quarantineDirectory = join(this.dataDir, 'quarantine', 'legacy-v1')
+    mkdirSync(quarantineDirectory, { recursive: true })
+    if (ownerUserId) {
+      const targetPath = this.profileDatabasePath(ownerUserId)
+      if (!existsSync(targetPath)) {
+        const legacy = new Database(legacyPath)
+        try {
+          legacy.pragma('wal_checkpoint(FULL)')
+          legacy.prepare('VACUUM INTO ?').run(targetPath)
+          const migrated = new Database(targetPath, { readonly: true })
+          try {
+            if (migrated.pragma('integrity_check', { simple: true }) !== 'ok') throw new Error('Migrated profile failed integrity validation')
+          } finally {
+            migrated.close()
+          }
+        } finally {
+          legacy.close()
+        }
+      }
+    }
+    for (const suffix of ['', '-wal', '-shm']) {
+      const source = `${legacyPath}${suffix}`
+      if (!existsSync(source)) continue
+      const target = join(quarantineDirectory, `moneywise.sqlite${suffix}`)
+      if (!existsSync(target)) renameSync(source, target)
+    }
+    writeFileSync(join(quarantineDirectory, 'migration.json'), JSON.stringify({
+      version: 2,
+      migratedAt: new Date().toISOString(),
+      ownership: ownerUserId ? 'deterministic-authenticated-user' : 'unknown-quarantined',
+      ownerProfileId: ownerUserId ? this.profileId(ownerUserId) : null
+    }, null, 2), 'utf8')
+  }
+
+  private openDatabase(): void {
     this.db = new Database(this.dbPath)
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
     this.db.pragma('synchronous = NORMAL')
     this.db.pragma('temp_store = MEMORY')
     this.initialize()
+  }
+
+  switchAccountProfile(userId: string | null): void {
+    const nextPath = this.profileDatabasePath(userId)
+    if (nextPath === this.dbPath) return
+    this.db.pragma('wal_checkpoint(FULL)')
+    this.db.close()
+    this.dbPath = nextPath
+    this.openDatabase()
+  }
+
+  close(): void {
+    this.db.pragma('wal_checkpoint(FULL)')
+    this.db.close()
   }
 
   private initialize(): void {

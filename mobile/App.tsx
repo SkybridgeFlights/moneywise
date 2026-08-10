@@ -21,7 +21,7 @@ import type {
 import { getMobileSyncConfig } from './src/services/config'
 import { upsertDebt, upsertExpense, upsertGoal, upsertIncome, deleteEntity, ensureSeedState, updateSettings } from './src/services/repository'
 import { MobileSyncService } from './src/services/sync'
-import { loadFinanceState, loadSyncState, resetMobileStorage, saveFinanceState, saveSyncState } from './src/services/storage'
+import { initializeMobileStorage, loadAccountProfile, resetMobileStorage, saveFinanceState, saveSyncState, setActiveMobileProfile } from './src/services/storage'
 
 type SyncStatus = {
   phase: 'disabled' | 'idle' | 'syncing' | 'error'
@@ -43,6 +43,8 @@ export default function App(): React.JSX.Element {
   const syncRef = useRef(syncState)
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const syncInFlightRef = useRef(false)
+  const syncPromiseRef = useRef<Promise<void> | null>(null)
+  const accountGenerationRef = useRef(0)
 
   financeRef.current = financeState
   syncRef.current = syncState
@@ -78,14 +80,14 @@ export default function App(): React.JSX.Element {
     let cancelled = false
 
     async function bootstrap(): Promise<void> {
-      const [storedFinance, storedSync] = await Promise.all([loadFinanceState(), loadSyncState()])
+      const stored = await initializeMobileStorage()
       if (cancelled) {
         return
       }
-      setFinanceState(ensureSeedState(storedFinance ?? createDefaultFinanceState()))
+      setFinanceState(ensureSeedState(stored.financeState ?? createDefaultFinanceState()))
       setSyncState({
         ...createEmptySyncState(),
-        ...(storedSync ?? {})
+        ...(stored.syncState ?? {})
       })
       setIsReady(true)
     }
@@ -104,14 +106,14 @@ export default function App(): React.JSX.Element {
     if (!isReady) {
       return
     }
-    void saveFinanceState(financeState)
-  }, [financeState, isReady])
+    if (syncState.userId) void saveFinanceState(financeState, syncState.userId)
+  }, [financeState, isReady, syncState.userId])
 
   useEffect(() => {
     if (!isReady) {
       return
     }
-    void saveSyncState(syncState)
+    if (syncState.userId) void saveSyncState(syncState, syncState.userId)
   }, [syncState, isReady])
 
   useEffect(() => {
@@ -142,19 +144,61 @@ export default function App(): React.JSX.Element {
     }
 
     syncInFlightRef.current = true
+    const generation = accountGenerationRef.current
 
     setSyncStatus({ phase: 'syncing', message: `Syncing ${reason}...` })
 
-    try {
+    const operation = (async () => {
       const result = await syncService.syncFinanceState(financeRef.current, syncRef.current)
+      if (generation !== accountGenerationRef.current) return
       if (result.financeState !== financeRef.current) {
         setFinanceState(result.financeState)
       }
       setSyncState(result.syncState)
       setSyncStatus(result.status)
+    })()
+    syncPromiseRef.current = operation
+    try {
+      await operation
     } finally {
+      if (syncPromiseRef.current === operation) syncPromiseRef.current = null
       syncInFlightRef.current = false
     }
+  }
+
+  async function beginAccountTransition(): Promise<void> {
+    accountGenerationRef.current += 1
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current)
+      syncTimeoutRef.current = null
+    }
+    await syncPromiseRef.current?.catch(() => undefined)
+  }
+
+  async function activateAccount(authenticated: SyncState): Promise<void> {
+    if (!authenticated.userId) throw new Error('Authenticated session is missing a user identity.')
+    const profile = await loadAccountProfile(authenticated.userId)
+    const nextFinance = ensureSeedState(profile.financeState ?? createDefaultFinanceState())
+    const nextSync: SyncState = {
+      ...createEmptySyncState(),
+      ...(profile.syncState ?? {}),
+      deviceId: authenticated.deviceId,
+      authToken: authenticated.authToken,
+      refreshToken: authenticated.refreshToken,
+      accessTokenExpiresAt: authenticated.accessTokenExpiresAt,
+      userId: authenticated.userId,
+      accountEmail: authenticated.accountEmail,
+      authMode: authenticated.authMode,
+      paused: false,
+      lastError: null
+    }
+    await Promise.all([
+      saveFinanceState(nextFinance, authenticated.userId),
+      saveSyncState(nextSync, authenticated.userId),
+      setActiveMobileProfile(authenticated.userId)
+    ])
+    setFinanceState(nextFinance)
+    setSyncState(nextSync)
   }
 
   function queueSync(reason: string): void {
@@ -218,8 +262,9 @@ export default function App(): React.JSX.Element {
   async function handleLogin(email: string, password: string): Promise<void> {
     setSyncStatus({ phase: 'syncing', message: 'Signing in...' })
     try {
+      await beginAccountTransition()
       const next = await syncService.login(syncRef.current, email, password)
-      setSyncState(next)
+      await activateAccount(next)
       setSyncStatus({ phase: 'idle', message: 'Signed in' })
     } catch (error) {
       setSyncStatus({ phase: 'error', message: error instanceof Error ? error.message : 'Sign in failed' })
@@ -230,8 +275,9 @@ export default function App(): React.JSX.Element {
   async function handleRegister(email: string, password: string): Promise<void> {
     setSyncStatus({ phase: 'syncing', message: 'Creating account...' })
     try {
+      await beginAccountTransition()
       const next = await syncService.register(syncRef.current, email, password)
-      setSyncState(next)
+      await activateAccount(next)
       setSyncStatus({ phase: 'idle', message: 'Account created' })
     } catch (error) {
       setSyncStatus({ phase: 'error', message: error instanceof Error ? error.message : 'Registration failed' })
@@ -240,8 +286,17 @@ export default function App(): React.JSX.Element {
   }
 
   async function handleLogout(): Promise<void> {
+    await beginAccountTransition()
+    if (syncRef.current.userId) {
+      await Promise.all([
+        saveFinanceState(financeRef.current, syncRef.current.userId),
+        saveSyncState(syncRef.current, syncRef.current.userId)
+      ])
+    }
     const next = await syncService.logout(syncRef.current)
+    await setActiveMobileProfile(null)
     setSyncState(next)
+    setFinanceState(createDefaultFinanceState())
     setSyncStatus({ phase: 'idle', message: 'Signed out' })
   }
 
@@ -254,7 +309,7 @@ export default function App(): React.JSX.Element {
       phase: syncConfig.enabled ? 'idle' : 'disabled',
       message: syncConfig.enabled ? 'Local data reset. Sync to restore remote records if needed.' : 'Local data reset'
     })
-    void resetMobileStorage()
+    void resetMobileStorage(syncState.userId ?? undefined)
   }
 
   if (!isReady) {
