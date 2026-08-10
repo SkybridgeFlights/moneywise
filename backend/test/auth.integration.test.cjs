@@ -4,6 +4,8 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { createBackend } = require('../index.cjs')
+const { createAuthHandlers } = require('../http/handlers/authHandlers.cjs')
+const { createRateLimiter } = require('../http/rateLimiter.cjs')
 const { spawnSync } = require('node:child_process')
 
 const cleanup = []
@@ -12,7 +14,7 @@ afterEach(async () => {
   while (cleanup.length) await cleanup.pop()()
 })
 
-async function start(authMode = 'password-only', nodeEnv = 'production') {
+async function start(authMode = 'password-only', nodeEnv = 'production', overrides = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'moneywise-auth-test-'))
   const backend = createBackend({
     nodeEnv,
@@ -23,7 +25,8 @@ async function start(authMode = 'password-only', nodeEnv = 'production') {
     accessTokenTtlMinutes: 15,
     authMode,
     logLevel: 'silent',
-    authSecret: 'integration-test-secret-that-is-not-production'
+    authSecret: 'integration-test-secret-that-is-not-production',
+    ...overrides
   })
   await new Promise((resolve) => backend.server.listen(0, '127.0.0.1', resolve))
   const address = backend.server.address()
@@ -261,6 +264,68 @@ test('public registration is rate limited independently of login', async () => {
   }
   assert.equal(result.response.status, 429)
   assert.match(result.body.error, /registration attempts/i)
+})
+
+test('per-client rejected registration attempts do not exhaust the global registration quota', async () => {
+  const baseUrl = await start('password-only', 'production', { trustedProxies: ['loopback'] })
+  const statuses = []
+  for (let index = 0; index < 100; index += 1) {
+    const result = await json(`${baseUrl}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'x-forwarded-for': '198.51.100.10' },
+      body: JSON.stringify({ email: `abusive-${index}@example.com`, password: 'legitimate-secure-password', deviceId: 'abusive-client' })
+    })
+    statuses.push(result.response.status)
+  }
+  assert.equal(statuses.filter((status) => status === 201).length, 5)
+  assert.equal(statuses.filter((status) => status === 429).length, 95)
+
+  const unrelated = await json(`${baseUrl}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'x-forwarded-for': '203.0.113.20' },
+    body: JSON.stringify({ email: 'unrelated-legitimate@example.com', password: 'legitimate-secure-password', deviceId: 'unrelated-client' })
+  })
+  assert.equal(unrelated.response.status, 201, 'per-client rejected requests consumed global registration capacity')
+})
+
+test('registration admission is concurrent-safe, bounded, and recovers after limiter expiry', async () => {
+  let timestamp = 1_000
+  let hashingAdmissions = 0
+  const registrationLimiter = createRateLimiter({ limit: 2, windowMs: 100, maxKeys: 4, now: () => timestamp })
+  const globalRegistrationLimiter = createRateLimiter({ limit: 3, windowMs: 100, maxKeys: 1, now: () => timestamp })
+  const handlers = createAuthHandlers({
+    authService: {
+      async registerWithPassword(parsed) {
+        hashingAdmissions += 1
+        return { user: { email: parsed.email } }
+      }
+    },
+    registrationLimiter,
+    globalRegistrationLimiter,
+    loginLimiter: createRateLimiter({ limit: 1, windowMs: 100, now: () => timestamp }),
+    sendJson(response, status, body) { response.status = status; response.body = body }
+  })
+  async function attempt(clientIp, index) {
+    const request = { clientIp, socket: {}, once() {} }
+    const response = {}
+    await handlers.register(request, response, { email: `user-${clientIp.replaceAll('.', '-')}-${index}@example.com`, password: 'legitimate-secure-password', deviceId: 'test' })
+    return response.status
+  }
+
+  const abusive = await Promise.all(Array.from({ length: 20 }, (_, index) => attempt('198.51.100.1', index)))
+  assert.equal(abusive.filter((status) => status === 201).length, 2)
+  assert.equal(abusive.filter((status) => status === 429).length, 18)
+  assert.equal(hashingAdmissions, 2, 'per-client rejected requests reached password hashing')
+  assert.equal(await attempt('203.0.113.1', 1), 201)
+  assert.equal(hashingAdmissions, 3)
+  assert.equal(await attempt('203.0.113.2', 1), 429, 'admitted requests must enforce the true global quota')
+  assert.equal(hashingAdmissions, 3)
+
+  timestamp += 101
+  assert.equal(await attempt('203.0.113.2', 2), 201)
+  assert.equal(hashingAdmissions, 4, 'registration did not recover after limiter expiry')
+  assert.ok(registrationLimiter.size() <= 4)
+  assert.equal(globalRegistrationLimiter.size(), 1)
 })
 
 test('oversized request bodies are rejected before parsing', async () => {

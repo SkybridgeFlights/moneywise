@@ -44,8 +44,12 @@ function createAuthHandlers({ authService, sendJson, loginLimiter, registrationL
         const parsed = passwordAuthSchema.parse(body)
         const clientIp = request.clientIp ?? request.socket.remoteAddress ?? 'unknown'
         const perClient = registrationLimiter.consume(clientIp)
+        if (!perClient.allowed) {
+          sendJson(response, 429, { error: 'Too many registration attempts. Try again later.' })
+          return
+        }
         const global = globalRegistrationLimiter.consume('global')
-        if (!perClient.allowed || !global.allowed) {
+        if (!global.allowed) {
           sendJson(response, 429, { error: 'Too many registration attempts. Try again later.' })
           return
         }
