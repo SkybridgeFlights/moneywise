@@ -1,6 +1,6 @@
-const { createBackup, findLatestBackup, verifyBackup } = require('./backups.cjs')
+const { applyRetention, createBackup, findLatestBackup, getBackupStatus, verifyBackup } = require('./backups.cjs')
 
-function startBackupScheduler({ databasePath, backupDirectory, intervalHours, logger }) {
+function startBackupScheduler({ databasePath, backupDirectory, intervalHours, minimumFreeBytes = 0, retentionPolicy = { hourlyHours: 24, dailyDays: 30, weeklyWeeks: 12 }, logger }) {
   if (!Number.isFinite(intervalHours) || intervalHours <= 0) return { stop() {} }
   let running = false
   let stopped = false
@@ -14,13 +14,19 @@ function startBackupScheduler({ databasePath, backupDirectory, intervalHours, lo
       if (latest) {
         try {
           verifyBackup(latest, intervalHours)
+          const retention = applyRetention(backupDirectory, retentionPolicy)
+          logger.info('backup_status', { ...getBackupStatus(backupDirectory), deleted: retention.deleted })
           return
         } catch {
           // A stale or invalid latest backup is replaced; the invalid file is retained for incident analysis.
         }
       }
-      const result = await createBackup(databasePath, backupDirectory)
+      const preflightRetention = applyRetention(backupDirectory, retentionPolicy)
+      if (preflightRetention.deleted.length > 0) logger.info('backup_retention_applied', { deleted: preflightRetention.deleted })
+      const result = await createBackup(databasePath, backupDirectory, new Date(), { minimumFreeBytes })
       logger.info('backup_created', { backup: result.manifest.backup, bytes: result.manifest.bytes })
+      const retention = applyRetention(backupDirectory, retentionPolicy)
+      logger.info('backup_status', { ...getBackupStatus(backupDirectory), deleted: retention.deleted })
     } catch (error) {
       logger.error('backup_failed', { error: error instanceof Error ? error.message : String(error) })
     } finally {

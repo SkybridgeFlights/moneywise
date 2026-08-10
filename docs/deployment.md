@@ -143,3 +143,14 @@ Recovery objectives must be set by the operator. With daily backups the technica
 8. a fresh backup is created and verified;
 9. logs contain no credentials or filesystem details in client responses;
 10. monitoring and alerts are active.
+# Backup retention and infrastructure boundary
+
+The backend retains one backup per hour for `MONEYWISE_BACKUP_KEEP_HOURLY_HOURS`, one per day for `MONEYWISE_BACKUP_KEEP_DAILY_DAYS`, and one per week for `MONEYWISE_BACKUP_KEEP_WEEKLY_WEEKS`. The newest valid backup and any backup carrying a `.lock` verification/restore marker are never removed. `MONEYWISE_BACKUP_MIN_FREE_MB` reserves free space before backup creation.
+
+The default Render configuration still stores `/data/backups` on the same persistent disk as the live SQLite database. This protects against logical corruption and failed upgrades, but **does not protect against disk or service-volume loss**. Production operations must replicate completed `.sqlite` and matching `.json` manifest pairs to an independently managed off-site destination. `MONEYWISE_BACKUP_DIRECTORY` may point to a separately mounted destination; no cloud credentials are included in the repository.
+
+# Trusted proxy and rate limiting
+
+`MONEYWISE_TRUSTED_PROXIES` is mandatory when production TLS is terminated upstream. It accepts explicit peer addresses or the constrained `loopback`, `linklocal`, and `uniquelocal` rules. Forwarded protocol and client-address headers are ignored unless the immediate TCP peer matches a configured rule. The Render deployment uses `uniquelocal`; operators must verify the actual proxy peer range before release and narrow it to explicit addresses where the platform permits.
+
+Rate limiting is bounded but process-local. Multiple backend replicas require enforcement at the trusted gateway or a future shared limiter adapter. The repository does not claim distributed rate limiting without an external shared service.
