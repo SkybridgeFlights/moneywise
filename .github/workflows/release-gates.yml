@@ -53,3 +53,5 @@ jobs:
         shell: pwsh
         run: |
           if (-not (Get-ChildItem release -File | Where-Object { $_.Extension -eq '.exe' })) { throw 'Windows package artifacts were not produced.' }
+      - name: Verify unsigned release structure
+        run: npm run release:verify:unsigned

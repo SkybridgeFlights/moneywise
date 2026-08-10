@@ -19,6 +19,9 @@
     "backend:start": "node backend/index.cjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "package:win": "npm.cmd run build && electron-builder --win nsis portable",
+    "release:verify": "node tools/verify-release.mjs",
+    "release:verify:unsigned": "node tools/verify-release.mjs --allow-unsigned",
+    "release:win": "npm run package:win && npm run release:verify",
     "package:mac": "npm.cmd run build && electron-builder --mac dmg"
   },
   "dependencies": {
