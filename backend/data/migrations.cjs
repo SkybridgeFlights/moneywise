@@ -1,18 +1,10 @@
 const path = require('node:path')
 const fs = require('node:fs')
+const BetterSqlite3 = require('better-sqlite3')
+const { randomUUID } = require('node:crypto')
 
-function runMigrations(db) {
+function applyMigrationV2(db, injectFailure = () => {}) {
   const sqlite = db.sqlite
-  const schemaVersion = sqlite.pragma('user_version', { simple: true })
-  const hasExistingSchema = sqlite.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").get().count > 0
-  if (hasExistingSchema && schemaVersion < 2) {
-    const parsed = path.parse(db.databasePath)
-    const backupPath = path.join(parsed.dir, `${parsed.name}.pre-v2-backup${parsed.ext || '.sqlite'}`)
-    if (!fs.existsSync(backupPath)) {
-      sqlite.prepare('VACUUM INTO ?').run(backupPath)
-    }
-  }
-
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
@@ -71,6 +63,7 @@ function runMigrations(db) {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
   `)
+  injectFailure('schema-created')
 
   const authModeColumn = sqlite.prepare("PRAGMA table_info('sessions')").all().some((row) => row.name === 'auth_mode')
   if (!authModeColumn) {
@@ -94,6 +87,7 @@ function runMigrations(db) {
   if (!revisionColumn) {
     sqlite.exec('ALTER TABLE finance_records ADD COLUMN revision INTEGER NOT NULL DEFAULT 0')
   }
+  injectFailure('columns-created')
   sqlite.exec(`
     UPDATE finance_records SET revision = rowid WHERE revision = 0;
     INSERT OR IGNORE INTO sync_revisions(revision) SELECT MAX(revision) FROM finance_records HAVING MAX(revision) > 0;
@@ -106,17 +100,20 @@ function runMigrations(db) {
     WHERE auth_mode != 'password'
        OR user_id IN (SELECT id FROM users WHERE password_hash IS NULL OR status != 'active');
   `)
+  injectFailure('data-normalized')
 
   const hasUsers = sqlite.prepare('SELECT COUNT(*) AS count FROM users').get().count > 0
   const hasSessions = sqlite.prepare('SELECT COUNT(*) AS count FROM sessions').get().count > 0
   const hasRecords = sqlite.prepare('SELECT COUNT(*) AS count FROM finance_records').get().count > 0
   if (hasUsers || hasSessions || hasRecords) {
+    injectFailure('before-version')
     sqlite.pragma('user_version = 2')
     return
   }
 
   const legacy = db.findLegacyJsonState()
   if (!legacy) {
+    injectFailure('before-version')
     sqlite.pragma('user_version = 2')
     return
   }
@@ -136,7 +133,6 @@ function runMigrations(db) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
 
-  sqlite.exec('BEGIN')
   try {
     legacy.users.forEach((user) => {
       insertUser.run(
@@ -178,8 +174,42 @@ function runMigrations(db) {
         , record.revision ?? 0
       )
     })
-    sqlite.exec('COMMIT')
+    injectFailure('legacy-imported')
+    injectFailure('before-version')
     sqlite.pragma('user_version = 2')
+  } catch (error) {
+    throw error
+  }
+}
+
+function runMigrations(db, options = {}) {
+  const sqlite = db.sqlite
+  const schemaVersion = sqlite.pragma('user_version', { simple: true })
+  if (schemaVersion >= 2) {
+    sqlite.exec(`
+      UPDATE users SET status = 'recovery-required', updated_at = datetime('now') WHERE password_hash IS NULL AND status != 'recovery-required';
+      UPDATE sessions SET revoked_at = COALESCE(revoked_at, datetime('now'))
+      WHERE auth_mode != 'password' OR user_id IN (SELECT id FROM users WHERE password_hash IS NULL OR status != 'active');
+    `)
+    return { fromVersion: schemaVersion, toVersion: schemaVersion, backupPath: null }
+  }
+  const hasExistingSchema = sqlite.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").get().count > 0
+  let backupPath = null
+  if (hasExistingSchema) {
+    const parsed = path.parse(db.databasePath)
+    const stamp = (options.now ?? new Date()).toISOString().replace(/[:.]/g, '-')
+    backupPath = path.join(parsed.dir, `${parsed.name}.pre-v2-${stamp}-${randomUUID()}${parsed.ext || '.sqlite'}`)
+    sqlite.prepare('VACUUM INTO ?').run(backupPath)
+    if (!fs.existsSync(backupPath) || fs.statSync(backupPath).size === 0) throw new Error('Pre-migration backup verification failed.')
+    const backup = new BetterSqlite3(backupPath, { readonly: true, fileMustExist: true })
+    try { if (backup.pragma('integrity_check', { simple: true }) !== 'ok') throw new Error('Pre-migration backup verification failed.') } finally { backup.close() }
+  }
+  sqlite.exec('BEGIN IMMEDIATE')
+  try {
+    options.injectFailure?.('transaction-started')
+    applyMigrationV2(db, options.injectFailure)
+    sqlite.exec('COMMIT')
+    return { fromVersion: schemaVersion, toVersion: 2, backupPath }
   } catch (error) {
     sqlite.exec('ROLLBACK')
     throw error
