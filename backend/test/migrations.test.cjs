@@ -66,8 +66,10 @@ for (const failureStep of ['transaction-started', 'schema-created', 'columns-cre
       INSERT INTO users VALUES ('u1', 'retry@example.test', 'hash', 'active', '2025-01-01', '2025-01-01');
     `)
     legacy.close()
-    const db = createDatabase(databasePath)
+    let db = createDatabase(databasePath)
     assert.throws(() => runMigrations(db, { injectFailure: (step) => { if (step === failureStep) throw new Error(`failure:${step}`) } }), new RegExp(`failure:${failureStep}`))
+    db.sqlite.close()
+    db = createDatabase(databasePath)
     assert.equal(db.sqlite.pragma('user_version', { simple: true }), 0)
     assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS count FROM users').get().count, 1)
     assert.equal(db.sqlite.prepare("PRAGMA table_info('sessions')").all().some((column) => column.name === 'refresh_token_hash'), false)
