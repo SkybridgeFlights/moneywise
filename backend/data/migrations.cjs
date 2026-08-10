@@ -98,6 +98,13 @@ function runMigrations(db) {
     UPDATE finance_records SET revision = rowid WHERE revision = 0;
     INSERT OR IGNORE INTO sync_revisions(revision) SELECT MAX(revision) FROM finance_records HAVING MAX(revision) > 0;
     CREATE INDEX IF NOT EXISTS idx_finance_records_user_revision ON finance_records(user_id, revision);
+    UPDATE users
+    SET status = 'recovery-required', updated_at = datetime('now')
+    WHERE password_hash IS NULL AND status != 'recovery-required';
+    UPDATE sessions
+    SET revoked_at = COALESCE(revoked_at, datetime('now'))
+    WHERE auth_mode != 'password'
+       OR user_id IN (SELECT id FROM users WHERE password_hash IS NULL OR status != 'active');
   `)
 
   const hasUsers = sqlite.prepare('SELECT COUNT(*) AS count FROM users').get().count > 0

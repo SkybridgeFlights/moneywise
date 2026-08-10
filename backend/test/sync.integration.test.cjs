@@ -92,3 +92,26 @@ test('malformed financial payloads and impossible dates are rejected without wri
   const bootstrap = await request(baseUrl, '/api/sync/bootstrap', { token })
   assert.equal(bootstrap.body.records.expense, undefined)
 })
+
+test('identical record IDs remain isolated between authenticated users', async () => {
+  const { baseUrl, token: userAToken } = await fixture()
+  const userB = await request(baseUrl, '/api/auth/register', {
+    method: 'POST', body: { email: 'sync-b@example.com', password: 'correct-horse-battery-b', deviceId: 'test-b' }
+  })
+  assert.equal(userB.status, 201)
+  await request(baseUrl, '/api/sync/push', {
+    method: 'POST', token: userAToken,
+    body: { deviceId: 'a', requestId: 'request-user-a-shared-id', changes: [change('shared-record-id')] }
+  })
+  await request(baseUrl, '/api/sync/push', {
+    method: 'POST', token: userB.body.accessToken,
+    body: { deviceId: 'b', requestId: 'request-user-b-shared-id', changes: [{ ...change('shared-record-id'), payload: { ...change('shared-record-id').payload, title: 'User B record' } }] }
+  })
+
+  const bootstrapA = await request(baseUrl, '/api/sync/bootstrap', { token: userAToken })
+  const bootstrapB = await request(baseUrl, '/api/sync/bootstrap', { token: userB.body.accessToken })
+  assert.equal(bootstrapA.body.records.expense.length, 1)
+  assert.equal(bootstrapB.body.records.expense.length, 1)
+  assert.equal(bootstrapA.body.records.expense[0].payload.title, 'shared-record-id')
+  assert.equal(bootstrapB.body.records.expense[0].payload.title, 'User B record')
+})

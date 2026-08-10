@@ -126,23 +126,21 @@ function createAuthService({ config, userRepository, sessionRepository }) {
       const now = new Date().toISOString()
       const email = input.email.toLowerCase()
       const existing = userRepository.findByEmail(email)
-      if (existing?.passwordHash) {
+      if (existing) {
         const error = new Error('An account with this email already exists.')
         error.code = 'account_exists'
         throw error
       }
 
       const passwordHash = await hashPassword(input.password)
-      const user = existing
-        ? userRepository.updatePassword(existing.id, passwordHash, now)
-        : userRepository.create({
-            id: createId('user'),
-            email,
-            passwordHash,
-            status: 'active',
-            createdAt: now,
-            updatedAt: now
-          })
+      const user = userRepository.create({
+        id: createId('user'),
+        email,
+        passwordHash,
+        status: 'active',
+        createdAt: now,
+        updatedAt: now
+      })
 
       return createPasswordSession(user, input)
     },
@@ -171,7 +169,7 @@ function createAuthService({ config, userRepository, sessionRepository }) {
       }
       sessionRepository.touch(session.id, new Date().toISOString())
       const user = userRepository.findById(session.userId)
-      if (!user) {
+      if (!user || user.status !== 'active') {
         return null
       }
       return { user: sanitizeUser(user), session }
