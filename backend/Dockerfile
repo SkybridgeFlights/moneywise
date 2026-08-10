@@ -12,7 +12,7 @@ ENV HOST=0.0.0.0
 ENV PORT=8787
 ENV DATABASE_PATH=/data/moneywise-sync.sqlite
 
-RUN mkdir -p /data
+RUN mkdir -p /data/backups
 
 EXPOSE 8787
 

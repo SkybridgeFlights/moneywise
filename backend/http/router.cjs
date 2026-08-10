@@ -17,6 +17,14 @@ function createRouter({ authHandlers, syncHandlers, backendInfo, requestLimiter,
   return async function route(request, response) {
     const url = new URL(request.url, 'http://localhost')
     const requestId = request.headers['x-request-id'] || require('node:crypto').randomUUID()
+    if (backendInfo?.requireHttps) {
+      response.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+      const forwardedProtocol = String(request.headers['x-forwarded-proto'] ?? '').split(',')[0].trim().toLowerCase()
+      if (url.pathname !== '/health' && forwardedProtocol !== 'https') {
+        sendJson(response, 426, { error: 'HTTPS is required.', requestId })
+        return
+      }
+    }
     const remoteAddress = request.socket.remoteAddress ?? 'unknown'
     const rate = requestLimiter.consume(`${remoteAddress}:${url.pathname}`)
     if (!rate.allowed) {

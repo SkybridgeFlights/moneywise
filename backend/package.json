@@ -7,7 +7,10 @@
   "scripts": {
     "start": "node index.cjs",
     "test": "node --test test/*.test.cjs",
-    "coverage": "node --experimental-test-coverage --test test/*.test.cjs"
+    "coverage": "node --experimental-test-coverage --test test/*.test.cjs",
+    "backup": "node scripts/backup.cjs",
+    "backup:verify": "node scripts/verify-backup.cjs",
+    "restore": "node scripts/restore.cjs"
   },
   "dependencies": {
     "better-sqlite3": "12.11.1",

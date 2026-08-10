@@ -36,6 +36,14 @@ async function start(authMode = 'password-only', nodeEnv = 'production') {
   return baseUrl
 }
 
+async function startWithHttpsEnforcement() {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'moneywise-https-test-'))
+  const backend = createBackend({ nodeEnv: 'production', host: '127.0.0.1', port: 0, databasePath: path.join(directory, 'test.sqlite'), sessionTtlDays: 30, accessTokenTtlMinutes: 15, authMode: 'password-only', logLevel: 'silent', authSecret: 'integration-test-secret-that-is-not-production', tlsTerminated: true })
+  await new Promise((resolve) => backend.server.listen(0, '127.0.0.1', resolve))
+  cleanup.push(async () => { await new Promise((resolve) => backend.server.close(resolve)); backend.db.sqlite.close(); fs.rmSync(directory, { recursive: true, force: true }) })
+  return `http://127.0.0.1:${backend.server.address().port}`
+}
+
 async function json(url, init) {
   const response = await fetch(url, { ...init, headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) } })
   return { response, body: await response.json() }
@@ -63,6 +71,27 @@ test('environment loader fails closed for explicit unsafe production auth', () =
   assert.match(result.stderr, /production requires MONEYWISE_BACKEND_AUTH_MODE=password-only/)
 })
 
+test('environment loader requires HTTPS termination and a canonical production URL', () => {
+  const baseEnvironment = {
+    ...process.env,
+    NODE_ENV: 'production',
+    MONEYWISE_BACKEND_AUTH_MODE: 'password-only',
+    AUTH_SECRET: 'a-production-test-secret-longer-than-32-bytes'
+  }
+  const missingTls = spawnSync(process.execPath, ['-e', "require('./config/env.cjs')"], {
+    cwd: path.resolve(__dirname, '..'), env: baseEnvironment, encoding: 'utf8'
+  })
+  assert.notEqual(missingTls.status, 0)
+  assert.match(missingTls.stderr, /PUBLIC_BASE_URL/)
+
+  const valid = spawnSync(process.execPath, ['-e', "require('./config/env.cjs')"], {
+    cwd: path.resolve(__dirname, '..'),
+    env: { ...baseEnvironment, PUBLIC_BASE_URL: 'https://sync.example.test', MONEYWISE_TLS_TERMINATED: 'true' },
+    encoding: 'utf8'
+  })
+  assert.equal(valid.status, 0, valid.stderr)
+})
+
 test('production dev-session endpoint returns 403', async () => {
   const baseUrl = await start()
   const result = await json(`${baseUrl}/api/auth/dev-session`, {
@@ -73,6 +102,15 @@ test('production dev-session endpoint returns 403', async () => {
   assert.match(result.body.error, /disabled/i)
   const malformed = await json(`${baseUrl}/api/auth/dev-session`, { method: 'POST', body: '{}' })
   assert.equal(malformed.response.status, 403)
+})
+
+test('production TLS enforcement rejects API traffic without trusted proxy HTTPS metadata', async () => {
+  const baseUrl = await startWithHttpsEnforcement()
+  const rejected = await json(`${baseUrl}/api/auth/login`, { method: 'POST', body: '{}' })
+  assert.equal(rejected.response.status, 426)
+  assert.equal(rejected.response.headers.get('strict-transport-security'), 'max-age=31536000; includeSubDomains')
+  const forwarded = await json(`${baseUrl}/api/auth/login`, { method: 'POST', headers: { 'x-forwarded-proto': 'https' }, body: '{}' })
+  assert.equal(forwarded.response.status, 400)
 })
 
 test('interactive login issues short-lived access and rotating refresh tokens', async () => {

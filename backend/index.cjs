@@ -13,6 +13,7 @@ const { createRouter } = require('./http/router.cjs')
 const { sendJson } = require('./http/sendJson.cjs')
 const { createRateLimiter } = require('./http/rateLimiter.cjs')
 const { createLogger } = require('./logging.cjs')
+const { startBackupScheduler } = require('./operations/backupScheduler.cjs')
 
 function createBackend(runtimeConfig = config) {
   if (runtimeConfig.nodeEnv === 'production' && runtimeConfig.authMode !== 'password-only') {
@@ -26,6 +27,12 @@ function createBackend(runtimeConfig = config) {
   const authService = createAuthService({ config: runtimeConfig, userRepository, sessionRepository })
   const syncService = createSyncService({ recordRepository })
   const logger = createLogger(runtimeConfig.logLevel)
+  const backupScheduler = startBackupScheduler({
+    databasePath: runtimeConfig.databasePath,
+    backupDirectory: runtimeConfig.backupDirectory,
+    intervalHours: runtimeConfig.backupIntervalHours,
+    logger
+  })
   const loginLimiter = createRateLimiter({ limit: 8, windowMs: 15 * 60 * 1000 })
   const requestLimiter = createRateLimiter({ limit: 120, windowMs: 60 * 1000 })
   const authHandlers = createAuthHandlers({ authService, sendJson, loginLimiter })
@@ -33,7 +40,7 @@ function createBackend(runtimeConfig = config) {
   const router = createRouter({
     authHandlers,
     syncHandlers,
-    backendInfo: { authMode: runtimeConfig.authMode, database: 'sqlite', nodeEnv: runtimeConfig.nodeEnv },
+    backendInfo: { authMode: runtimeConfig.authMode, database: 'sqlite', nodeEnv: runtimeConfig.nodeEnv, requireHttps: runtimeConfig.tlsTerminated === true },
     requestLimiter,
     logger
   })
@@ -41,7 +48,7 @@ function createBackend(runtimeConfig = config) {
   server.requestTimeout = 15_000
   server.headersTimeout = 10_000
   server.keepAliveTimeout = 5_000
-  return { db, server }
+  return { db, server, backupScheduler }
 }
 
 function startBackend(runtimeConfig = config) {
@@ -59,6 +66,7 @@ if (require.main === module) {
   function shutdown(signal) {
     console.log(`[backend] Received ${signal}, shutting down`)
     backend.server.close(() => {
+      backend.backupScheduler.stop()
       backend.db.sqlite.close()
       process.exit(0)
     })

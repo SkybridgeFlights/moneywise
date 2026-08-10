@@ -24,3 +24,11 @@ services:
         value: 30
       - key: AUTH_SECRET
         generateValue: true
+      - key: MONEYWISE_TLS_TERMINATED
+        value: true
+      - key: MONEYWISE_BACKUP_DIRECTORY
+        value: /data/backups
+      - key: MONEYWISE_BACKUP_MAX_AGE_HOURS
+        value: 24
+      - key: MONEYWISE_BACKUP_INTERVAL_HOURS
+        value: 24

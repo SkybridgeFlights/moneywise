@@ -21,8 +21,12 @@ function loadEnvFile(filePath) {
     })
 }
 
-loadEnvFile(path.resolve(process.cwd(), '.env'))
-loadEnvFile(path.resolve(process.cwd(), '.env.backend'))
+const productionEnvironment = process.env.NODE_ENV === 'production'
+const allowEnvironmentFiles = process.env.MONEYWISE_ALLOW_ENV_FILES === 'true'
+if (!productionEnvironment || allowEnvironmentFiles) {
+  loadEnvFile(path.resolve(process.cwd(), '.env'))
+  loadEnvFile(path.resolve(process.cwd(), '.env.backend'))
+}
 
 function getNumber(name, fallback) {
   const value = Number(process.env[name] ?? fallback)
@@ -39,6 +43,14 @@ function getFirstValue(...names) {
   return null
 }
 
+function getBoolean(name, fallback = false) {
+  const value = process.env[name]
+  if (value === undefined) return fallback
+  if (value === 'true') return true
+  if (value === 'false') return false
+  throw new Error(`${name} must be true or false.`)
+}
+
 const config = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   port: getNumber('PORT', getNumber('MONEYWISE_BACKEND_PORT', 8787)),
@@ -48,7 +60,12 @@ const config = {
   accessTokenTtlMinutes: getNumber('MONEYWISE_BACKEND_ACCESS_TOKEN_TTL_MINUTES', 15),
   authMode: process.env.MONEYWISE_BACKEND_AUTH_MODE ?? (process.env.NODE_ENV === 'production' ? 'password-only' : 'hybrid'),
   logLevel: process.env.MONEYWISE_BACKEND_LOG_LEVEL ?? 'info',
-  authSecret: getFirstValue('AUTH_SECRET', 'MONEYWISE_BACKEND_AUTH_SECRET') ?? 'moneywise-dev-secret-change-me'
+  authSecret: getFirstValue('AUTH_SECRET', 'MONEYWISE_BACKEND_AUTH_SECRET') ?? 'moneywise-dev-secret-change-me',
+  publicBaseUrl: getFirstValue('PUBLIC_BASE_URL', 'MONEYWISE_PUBLIC_BASE_URL', 'RENDER_EXTERNAL_URL'),
+  tlsTerminated: getBoolean('MONEYWISE_TLS_TERMINATED'),
+  backupDirectory: path.resolve(process.cwd(), getFirstValue('BACKUP_DIRECTORY', 'MONEYWISE_BACKUP_DIRECTORY') ?? 'backend-data/backups'),
+  backupMaxAgeHours: getNumber('MONEYWISE_BACKUP_MAX_AGE_HOURS', 24),
+  backupIntervalHours: getNumber('MONEYWISE_BACKUP_INTERVAL_HOURS', 24)
 }
 
 if (!['password-only', 'hybrid'].includes(config.authMode)) {
@@ -57,8 +74,26 @@ if (!['password-only', 'hybrid'].includes(config.authMode)) {
 if (config.nodeEnv === 'production' && config.authMode !== 'password-only') {
   throw new Error('Unsafe authentication configuration: production requires MONEYWISE_BACKEND_AUTH_MODE=password-only.')
 }
-if (config.nodeEnv === 'production' && (!config.authSecret || config.authSecret === 'moneywise-dev-secret-change-me' || config.authSecret === 'change-me')) {
-  throw new Error('Unsafe authentication configuration: production requires a strong AUTH_SECRET.')
+if (config.nodeEnv === 'production' && (!config.authSecret || config.authSecret.length < 32 || config.authSecret === 'moneywise-dev-secret-change-me' || config.authSecret === 'change-me')) {
+  throw new Error('Unsafe authentication configuration: production requires AUTH_SECRET with at least 32 characters.')
+}
+if (config.nodeEnv === 'production' && (!config.publicBaseUrl || !config.publicBaseUrl.startsWith('https://'))) {
+  throw new Error('Unsafe transport configuration: production requires PUBLIC_BASE_URL (or RENDER_EXTERNAL_URL) using https://.')
+}
+if (config.nodeEnv === 'production' && !config.tlsTerminated) {
+  throw new Error('Unsafe transport configuration: production requires MONEYWISE_TLS_TERMINATED=true behind the trusted TLS proxy.')
+}
+if (config.nodeEnv === 'production' && (config.accessTokenTtlMinutes < 1 || config.accessTokenTtlMinutes > 30)) {
+  throw new Error('Unsafe authentication configuration: access token TTL must be between 1 and 30 minutes.')
+}
+if (config.nodeEnv === 'production' && (config.sessionTtlDays < 1 || config.sessionTtlDays > 90)) {
+  throw new Error('Unsafe authentication configuration: session TTL must be between 1 and 90 days.')
+}
+if (config.nodeEnv === 'production' && (config.backupMaxAgeHours < 1 || config.backupMaxAgeHours > 168)) {
+  throw new Error('Unsafe backup configuration: MONEYWISE_BACKUP_MAX_AGE_HOURS must be between 1 and 168.')
+}
+if (config.nodeEnv === 'production' && (config.backupIntervalHours < 1 || config.backupIntervalHours > config.backupMaxAgeHours)) {
+  throw new Error('Unsafe backup configuration: backup interval must be positive and no greater than maximum backup age.')
 }
 
 module.exports = {
