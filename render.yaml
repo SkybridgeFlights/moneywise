@@ -27,7 +27,7 @@ services:
       - key: MONEYWISE_TLS_TERMINATED
         value: true
       - key: MONEYWISE_TRUSTED_PROXIES
-        value: uniquelocal
+        value: render
       - key: MONEYWISE_BACKUP_DIRECTORY
         value: /data/backups
       - key: MONEYWISE_BACKUP_MAX_AGE_HOURS

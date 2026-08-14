@@ -38,3 +38,16 @@ test('forwarded headers are honored only for an explicitly trusted peer', () => 
   const trustedB = resolveRequestContext({ socket: { remoteAddress: '10.0.0.1' }, headers: { 'x-forwarded-for': '198.51.100.5', 'x-forwarded-proto': 'https' } }, ['10.0.0.1'])
   assert.equal(trustedA.clientIp, '198.51.100.4'); assert.equal(trustedB.clientIp, '198.51.100.5'); assert.equal(trustedA.secure, true)
 })
+
+test('Render proxy mode requires its overwritten client header and ignores forged X-Forwarded-For', () => {
+  const forgedProtocol = resolveRequestContext({ socket: { remoteAddress: '203.0.113.8' }, headers: { 'x-forwarded-for': '198.51.100.4', 'x-forwarded-proto': 'https' } }, ['render'])
+  assert.equal(forgedProtocol.clientIp, '203.0.113.8')
+  assert.equal(forgedProtocol.secure, false)
+
+  const renderHttps = resolveRequestContext({ socket: { remoteAddress: '203.0.113.8' }, headers: { 'cf-connecting-ip': '192.0.2.10', 'x-forwarded-for': '198.51.100.99, 192.0.2.10', 'x-forwarded-proto': 'https' } }, ['render'])
+  assert.equal(renderHttps.clientIp, '192.0.2.10')
+  assert.equal(renderHttps.secure, true)
+
+  const forgedForwardedFor = resolveRequestContext({ socket: { remoteAddress: '203.0.113.8' }, headers: { 'cf-connecting-ip': '192.0.2.10', 'x-forwarded-for': '127.0.0.1', 'x-forwarded-proto': 'https' } }, ['render'])
+  assert.equal(forgedForwardedFor.clientIp, '192.0.2.10')
+})

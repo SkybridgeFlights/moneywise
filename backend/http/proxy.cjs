@@ -17,6 +17,12 @@ function matchesTrustedProxy(address, rules = []) {
 
 function resolveRequestContext(request, trustedProxyRules = []) {
   const peer = normalizeAddress(request.socket.remoteAddress ?? 'unknown')
+  if (trustedProxyRules.includes('render')) {
+    const renderClientIp = normalizeAddress(request.headers['cf-connecting-ip'])
+    const forwardedProtocol = String(request.headers['x-forwarded-proto'] ?? '').split(',')[0].trim().toLowerCase()
+    const trusted = net.isIP(renderClientIp) !== 0
+    return { peer, trustedProxy: trusted, clientIp: trusted ? renderClientIp : peer, secure: trusted && forwardedProtocol === 'https' }
+  }
   const trusted = matchesTrustedProxy(peer, trustedProxyRules)
   const forwardedFor = String(request.headers['x-forwarded-for'] ?? '').split(',')[0].trim()
   const clientIp = trusted && net.isIP(forwardedFor) ? normalizeAddress(forwardedFor) : peer
