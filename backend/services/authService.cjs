@@ -64,11 +64,11 @@ function createAuthService({ config, userRepository, sessionRepository }) {
     }
   }
 
-  function issueSession(user, input, authMode) {
+  async function issueSession(user, input, authMode, repository = sessionRepository) {
     const now = new Date().toISOString()
       const accessToken = crypto.randomBytes(32).toString('base64url')
       const refreshToken = crypto.randomBytes(48).toString('base64url')
-      const session = sessionRepository.create({
+      const session = await repository.create({
         id: createId('session'),
         userId: user.id,
         tokenHash: sha256(accessToken, config.authSecret),
@@ -105,13 +105,13 @@ function createAuthService({ config, userRepository, sessionRepository }) {
     isDevSessionEnabled() {
       return config.nodeEnv !== 'production' && config.authMode === 'hybrid'
     },
-    createDevSession(input) {
+    async createDevSession(input) {
       ensureDevSessionsAllowed()
       const now = new Date().toISOString()
       const email = input.email.toLowerCase()
-      let user = userRepository.findByEmail(email)
+      let user = await userRepository.findByEmail(email)
       if (!user) {
-        user = userRepository.create({
+        user = await userRepository.create({
           id: createId('user'),
           email,
           passwordHash: null,
@@ -125,7 +125,7 @@ function createAuthService({ config, userRepository, sessionRepository }) {
     async registerWithPassword(input, signal) {
       const now = new Date().toISOString()
       const email = input.email.toLowerCase()
-      const existing = userRepository.findByEmail(email)
+      const existing = await userRepository.findByEmail(email)
       if (existing) {
         const error = new Error('An account with this email already exists.')
         error.code = 'account_exists'
@@ -133,7 +133,7 @@ function createAuthService({ config, userRepository, sessionRepository }) {
       }
 
       const passwordHash = await hashPassword(input.password, signal)
-      const user = userRepository.create({
+      const user = await userRepository.create({
         id: createId('user'),
         email,
         passwordHash,
@@ -142,57 +142,65 @@ function createAuthService({ config, userRepository, sessionRepository }) {
         updatedAt: now
       })
 
-      return createPasswordSession(user, input)
+      return await createPasswordSession(user, input)
     },
     async loginWithPassword(input) {
       const email = input.email.toLowerCase()
-      const user = userRepository.findByEmail(email)
+      const user = await userRepository.findByEmail(email)
       if (!user || !user.passwordHash || !(await verifyPassword(input.password, user.passwordHash))) {
         const error = new Error('Invalid email or password.')
         error.code = 'invalid_credentials'
         throw error
       }
-      return createPasswordSession(user, input)
+      return await createPasswordSession(user, input)
     },
-    authenticateFromHeader(authorizationHeader) {
+    async authenticateFromHeader(authorizationHeader) {
       if (!authorizationHeader || !authorizationHeader.startsWith('Bearer ')) {
         return null
       }
       const token = authorizationHeader.slice('Bearer '.length)
       const tokenHash = sha256(token, config.authSecret)
-      const session = sessionRepository.findByTokenHash(tokenHash)
+      const session = await sessionRepository.findByTokenHash(tokenHash)
       if (!session || session.revokedAt) {
         return null
       }
       if (new Date(session.expiresAt).getTime() <= Date.now()) {
         return null
       }
-      sessionRepository.touch(session.id, new Date().toISOString())
-      const user = userRepository.findById(session.userId)
+      await sessionRepository.touch(session.id, new Date().toISOString())
+      const user = await userRepository.findById(session.userId)
       if (!user || user.status !== 'active') {
         return null
       }
       return { user: sanitizeUser(user), session }
     },
-    refreshSession(input) {
+    async refreshSession(input) {
       const refreshTokenHash = sha256(input.refreshToken, config.authSecret)
-      const existing = sessionRepository.findByRefreshTokenHash(refreshTokenHash)
+      const existing = await sessionRepository.findByRefreshTokenHash(refreshTokenHash)
       if (!existing || existing.revokedAt || !existing.refreshExpiresAt || new Date(existing.refreshExpiresAt).getTime() <= Date.now()) {
         const error = new Error('Invalid or expired refresh token.')
         error.code = 'invalid_credentials'
         throw error
       }
-      const user = userRepository.findById(existing.userId)
+      const user = await userRepository.findById(existing.userId)
       if (!user || user.status !== 'active') {
         const error = new Error('Invalid or expired refresh token.')
         error.code = 'invalid_credentials'
         throw error
       }
-      sessionRepository.revoke(existing.id, new Date().toISOString())
-      return issueSession(user, { deviceId: input.deviceId, label: existing.label }, existing.authMode)
+      return sessionRepository.transaction(async (transactionRepository) => {
+        const current = await transactionRepository.findByRefreshTokenHash(refreshTokenHash)
+        if (!current || current.revokedAt) {
+          const error = new Error('Invalid or expired refresh token.')
+          error.code = 'invalid_credentials'
+          throw error
+        }
+        await transactionRepository.revoke(existing.id, new Date().toISOString())
+        return issueSession(user, { deviceId: input.deviceId, label: existing.label }, existing.authMode, transactionRepository)
+      })
     },
-    logout(sessionId) {
-      sessionRepository.revoke(sessionId, new Date().toISOString())
+    async logout(sessionId) {
+      await sessionRepository.revoke(sessionId, new Date().toISOString())
     }
   }
 }

@@ -10,11 +10,11 @@ afterEach(async () => { while (cleanup.length) await cleanup.pop()() })
 
 async function fixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'moneywise-sync-test-'))
-  const backend = createBackend({ nodeEnv: 'test', host: '127.0.0.1', port: 0, databasePath: path.join(directory, 'test.sqlite'), sessionTtlDays: 30, accessTokenTtlMinutes: 15, authMode: 'password-only', logLevel: 'silent', authSecret: 'sync-integration-test-secret-value' })
+  const backend = await createBackend({ nodeEnv: 'test', databaseProvider: 'sqlite', host: '127.0.0.1', port: 0, databasePath: path.join(directory, 'test.sqlite'), sessionTtlDays: 30, accessTokenTtlMinutes: 15, authMode: 'password-only', logLevel: 'silent', authSecret: 'sync-integration-test-secret-value' })
   await new Promise((resolve) => backend.server.listen(0, '127.0.0.1', resolve))
   const baseUrl = `http://127.0.0.1:${backend.server.address().port}`
   const registration = await request(baseUrl, '/api/auth/register', { method: 'POST', body: { email: 'sync@example.com', password: 'correct-horse-battery', deviceId: 'test' } })
-  cleanup.push(async () => { await new Promise((resolve) => backend.server.close(resolve)); backend.db.sqlite.close(); fs.rmSync(directory, { recursive: true, force: true }) })
+  cleanup.push(async () => { await new Promise((resolve) => backend.server.close(resolve)); await backend.database.close(); fs.rmSync(directory, { recursive: true, force: true }) })
   return { baseUrl, token: registration.body.accessToken }
 }
 

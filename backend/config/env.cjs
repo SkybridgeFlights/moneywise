@@ -58,6 +58,7 @@ function getTrustedProxies() {
 
 const config = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
+  databaseProvider: getFirstValue('DATABASE_PROVIDER') ?? (process.env.NODE_ENV === 'production' ? null : 'sqlite'),
   port: getNumber('PORT', getNumber('MONEYWISE_BACKEND_PORT', 8787)),
   host: getFirstValue('HOST', 'MONEYWISE_BACKEND_HOST') ?? '0.0.0.0',
   databasePath: path.resolve(process.cwd(), getFirstValue('DATABASE_PATH', 'MONEYWISE_BACKEND_DB_PATH') ?? 'backend-data/moneywise-sync.sqlite'),
@@ -76,6 +77,18 @@ const config = {
   ,backupDailyDays: getNumber('MONEYWISE_BACKUP_KEEP_DAILY_DAYS', 30)
   ,backupWeeklyWeeks: getNumber('MONEYWISE_BACKUP_KEEP_WEEKLY_WEEKS', 12)
   ,trustedProxies: getTrustedProxies()
+  ,tursoDatabaseUrl: getFirstValue('TURSO_DATABASE_URL')
+  ,tursoAuthToken: getFirstValue('TURSO_AUTH_TOKEN')
+}
+
+if (!['sqlite', 'turso'].includes(config.databaseProvider)) {
+  throw new Error('DATABASE_PROVIDER must be explicitly set to sqlite or turso in production.')
+}
+if (config.nodeEnv === 'production' && config.databaseProvider !== 'turso') {
+  throw new Error('Unsafe database configuration: production requires DATABASE_PROVIDER=turso.')
+}
+if (config.databaseProvider === 'turso' && (!config.tursoDatabaseUrl || !config.tursoAuthToken)) {
+  throw new Error('Turso requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN.')
 }
 
 if (!['password-only', 'hybrid'].includes(config.authMode)) {

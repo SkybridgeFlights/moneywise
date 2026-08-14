@@ -13,22 +13,29 @@ function createConflict(current) {
 }
 
 function createSyncService({ recordRepository }) {
+  async function applyUpsert(repository, userId, change, options = {}) {
+    const current = await repository.findByUserAndRecord(userId, change.entityType, change.recordId)
+    if (typeof change.baseVersion === 'number' && current && current.version !== change.baseVersion) return { ok: false, conflict: createConflict(current) }
+    const updatedAt = new Date().toISOString()
+    const revision = await repository.nextRevision()
+    const nextRecord = await repository.upsert({
+      syncId: createSyncId(userId, change.entityType, change.recordId), userId, entityType: change.entityType, recordId: change.recordId,
+      payload: change.payload ?? {}, createdAt: current?.createdAt ?? updatedAt, updatedAt, deletedAt: change.deletedAt ?? null,
+      version: (current?.version ?? 0) + 1, revision, lastModifiedByDeviceId: change.lastModifiedByDeviceId ?? options.deviceId ?? null
+    })
+    return { ok: true, record: nextRecord }
+  }
+
   return {
-    bootstrap(userId) {
-      const recordsByEntity = recordRepository.bootstrap(userId)
-      const latestCursor = recordRepository
-        .listByUser(userId)
-        .reduce((latest, record) => Math.max(latest, record.revision), 0)
-      return {
-        cursor: String(latestCursor),
-        records: recordsByEntity
-      }
+    async bootstrap(userId) {
+      const snapshot = await recordRepository.bootstrapSnapshot(userId)
+      return { cursor: String(snapshot.cursor), records: snapshot.records }
     },
     bootstrapOrder: BOOTSTRAP_ORDER,
-    getChanges(userId, since, limit = 200) {
+    async getChanges(userId, since, limit = 200) {
       const parsedSince = /^\d+$/.test(String(since)) ? Number(since) : 0
       const safeLimit = Math.max(1, Math.min(Number(limit) || 200, 500))
-      const records = recordRepository.listChangesSince(userId, parsedSince, safeLimit + 1)
+      const records = await recordRepository.listChangesSince(userId, parsedSince, safeLimit + 1)
       const hasMore = records.length > safeLimit
       const changes = hasMore ? records.slice(0, safeLimit) : records
       const latestCursor = changes.reduce((latest, record) => Math.max(latest, record.revision), parsedSince)
@@ -48,38 +55,10 @@ function createSyncService({ recordRepository }) {
         }))
       }
     },
-    upsertRecord(userId, change, options = {}) {
-      const current = recordRepository.findByUserAndRecord(userId, change.entityType, change.recordId)
-      if (typeof change.baseVersion === 'number' && current && current.version !== change.baseVersion) {
-        return {
-          ok: false,
-          conflict: createConflict(current)
-        }
-      }
-
-      const updatedAt = new Date().toISOString()
-      const createdAt = current?.createdAt ?? updatedAt
-      const revision = recordRepository.nextRevision()
-      const nextRecord = recordRepository.upsert({
-        syncId: createSyncId(userId, change.entityType, change.recordId),
-        userId,
-        entityType: change.entityType,
-        recordId: change.recordId,
-        payload: change.payload ?? {},
-        createdAt,
-        updatedAt,
-        deletedAt: change.deletedAt ?? null,
-        version: (current?.version ?? 0) + 1,
-        revision,
-        lastModifiedByDeviceId: change.lastModifiedByDeviceId ?? options.deviceId ?? null
-      })
-
-      return {
-        ok: true,
-        record: nextRecord
-      }
+    async upsertRecord(userId, change, options = {}) {
+      return recordRepository.transaction((transactionRepository) => applyUpsert(transactionRepository, userId, change, options))
     },
-    softDeleteRecord(userId, entityType, recordId, options = {}) {
+    async softDeleteRecord(userId, entityType, recordId, options = {}) {
       return this.upsertRecord(
         userId,
         {
@@ -92,33 +71,39 @@ function createSyncService({ recordRepository }) {
         options
       )
     },
-    pushBatch(userId, payload) {
-      const replay = recordRepository.findRequest(userId, payload.requestId)
+    async pushBatch(userId, payload, options = {}) {
+      const replay = await recordRepository.findRequest(userId, payload.requestId)
       if (replay) return replay
-      return recordRepository.transaction(() => {
-        const conflicts = payload.changes.flatMap((change) => {
-          const current = recordRepository.findByUserAndRecord(userId, change.entityType, change.recordId)
-          return typeof change.baseVersion === 'number' && current && current.version !== change.baseVersion
-            ? [{ entityType: change.entityType, recordId: change.recordId, conflict: createConflict(current) }]
-            : []
-        })
+      return recordRepository.transaction(async (transactionRepository) => {
+        const transactionReplay = await transactionRepository.findRequest(userId, payload.requestId)
+        if (transactionReplay) return transactionReplay
+        options.injectFailure?.('after-idempotency-lookup')
+        const conflicts = []
+        for (const change of payload.changes) {
+          const current = await transactionRepository.findByUserAndRecord(userId, change.entityType, change.recordId)
+          if (typeof change.baseVersion === 'number' && current && current.version !== change.baseVersion) conflicts.push({ entityType: change.entityType, recordId: change.recordId, conflict: createConflict(current) })
+        }
+        options.injectFailure?.('after-conflict-validation')
         if (conflicts.length > 0) {
           const response = { applied: [], conflicts, atomic: true, replayed: false }
-          recordRepository.saveRequest(userId, payload.requestId, response)
+          await transactionRepository.saveRequest(userId, payload.requestId, response)
           return response
         }
-        const applied = payload.changes.map((change) => {
-          const result = this.upsertRecord(userId, change, { deviceId: payload.deviceId })
-          return {
+        const applied = []
+        for (const change of payload.changes) {
+          const result = await applyUpsert(transactionRepository, userId, change, { deviceId: payload.deviceId })
+          applied.push({
             entityType: result.record.entityType,
             recordId: result.record.recordId,
             version: result.record.version,
             updatedAt: result.record.updatedAt,
             deletedAt: result.record.deletedAt
-          }
-        })
+          })
+          options.injectFailure?.('after-record-write', applied.length)
+        }
         const response = { applied, conflicts: [], atomic: true, replayed: false }
-        recordRepository.saveRequest(userId, payload.requestId, response)
+        await transactionRepository.saveRequest(userId, payload.requestId, response)
+        options.injectFailure?.('after-idempotency-save')
         return response
       })
     }

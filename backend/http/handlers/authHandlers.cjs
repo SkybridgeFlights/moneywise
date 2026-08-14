@@ -27,7 +27,7 @@ function createAuthHandlers({ authService, sendJson, loginLimiter, registrationL
           return
         }
         const parsed = userSessionSchema.parse(body)
-        const session = authService.createDevSession(parsed)
+        const session = await authService.createDevSession(parsed)
         sendJson(response, 201, session)
       } catch (error) {
         if (mapAuthError(error, response)) {
@@ -86,14 +86,14 @@ function createAuthHandlers({ authService, sendJson, loginLimiter, registrationL
     async refresh(request, response, body) {
       try {
         const parsed = refreshSessionSchema.parse(body)
-        sendJson(response, 200, authService.refreshSession(parsed))
+        sendJson(response, 200, await authService.refreshSession(parsed))
       } catch (error) {
         if (mapAuthError(error, response)) return
         throw error
       }
     },
     async session(request, response) {
-      const principal = authService.authenticateFromHeader(request.headers.authorization)
+      const principal = await authService.authenticateFromHeader(request.headers.authorization)
       if (!principal) {
         sendJson(response, 401, { error: 'Authentication is required.' })
         return
@@ -110,12 +110,12 @@ function createAuthHandlers({ authService, sendJson, loginLimiter, registrationL
       })
     },
     async logout(request, response) {
-      const principal = authService.authenticateFromHeader(request.headers.authorization)
+      const principal = await authService.authenticateFromHeader(request.headers.authorization)
       if (!principal) {
         sendJson(response, 401, { error: 'Authentication is required.' })
         return
       }
-      authService.logout(principal.session.id)
+      await authService.logout(principal.session.id)
       sendJson(response, 200, { ok: true })
     }
   }

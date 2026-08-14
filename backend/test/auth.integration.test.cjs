@@ -16,8 +16,10 @@ afterEach(async () => {
 
 async function start(authMode = 'password-only', nodeEnv = 'production', overrides = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'moneywise-auth-test-'))
-  const backend = createBackend({
+  const backend = await createBackend({
     nodeEnv,
+    databaseProvider: 'sqlite',
+    ...(nodeEnv === 'production' ? { _testOnlyAllowProductionSqlite: true } : {}),
     host: '127.0.0.1',
     port: 0,
     databasePath: path.join(directory, 'test.sqlite'),
@@ -33,7 +35,7 @@ async function start(authMode = 'password-only', nodeEnv = 'production', overrid
   const baseUrl = `http://127.0.0.1:${address.port}`
   cleanup.push(async () => {
     await new Promise((resolve) => backend.server.close(resolve))
-    backend.db.sqlite.close()
+    await backend.database.close()
     fs.rmSync(directory, { recursive: true, force: true })
   })
   return baseUrl
@@ -41,9 +43,9 @@ async function start(authMode = 'password-only', nodeEnv = 'production', overrid
 
 async function startWithHttpsEnforcement() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'moneywise-https-test-'))
-  const backend = createBackend({ nodeEnv: 'production', host: '127.0.0.1', port: 0, databasePath: path.join(directory, 'test.sqlite'), sessionTtlDays: 30, accessTokenTtlMinutes: 15, authMode: 'password-only', logLevel: 'silent', authSecret: 'integration-test-secret-that-is-not-production', tlsTerminated: true, trustedProxies: ['loopback'] })
+  const backend = await createBackend({ nodeEnv: 'production', databaseProvider: 'sqlite', _testOnlyAllowProductionSqlite: true, host: '127.0.0.1', port: 0, databasePath: path.join(directory, 'test.sqlite'), sessionTtlDays: 30, accessTokenTtlMinutes: 15, authMode: 'password-only', logLevel: 'silent', authSecret: 'integration-test-secret-that-is-not-production', tlsTerminated: true, trustedProxies: ['loopback'] })
   await new Promise((resolve) => backend.server.listen(0, '127.0.0.1', resolve))
-  cleanup.push(async () => { await new Promise((resolve) => backend.server.close(resolve)); backend.db.sqlite.close(); fs.rmSync(directory, { recursive: true, force: true }) })
+  cleanup.push(async () => { await new Promise((resolve) => backend.server.close(resolve)); await backend.database.close(); fs.rmSync(directory, { recursive: true, force: true }) })
   return `http://127.0.0.1:${backend.server.address().port}`
 }
 
@@ -52,8 +54,8 @@ async function json(url, init) {
   return { response, body: await response.json() }
 }
 
-test('production refuses to start with hybrid authentication', () => {
-  assert.throws(
+test('production refuses to start with hybrid authentication', async () => {
+  await assert.rejects(
     () => createBackend({ nodeEnv: 'production', authMode: 'hybrid', databasePath: ':memory:' }),
     /production requires password-only/
   )
@@ -66,7 +68,8 @@ test('environment loader fails closed for explicit unsafe production auth', () =
       ...process.env,
       NODE_ENV: 'production',
       MONEYWISE_BACKEND_AUTH_MODE: 'hybrid',
-      AUTH_SECRET: 'a-production-test-secret-longer-than-32-bytes'
+      AUTH_SECRET: 'a-production-test-secret-longer-than-32-bytes',
+      DATABASE_PROVIDER: 'turso', TURSO_DATABASE_URL: 'libsql://test.example', TURSO_AUTH_TOKEN: 'test-token'
     },
     encoding: 'utf8'
   })
@@ -79,7 +82,8 @@ test('environment loader requires HTTPS termination and a canonical production U
     ...process.env,
     NODE_ENV: 'production',
     MONEYWISE_BACKEND_AUTH_MODE: 'password-only',
-    AUTH_SECRET: 'a-production-test-secret-longer-than-32-bytes'
+    AUTH_SECRET: 'a-production-test-secret-longer-than-32-bytes',
+    DATABASE_PROVIDER: 'turso', TURSO_DATABASE_URL: 'libsql://test.example', TURSO_AUTH_TOKEN: 'test-token'
   }
   const missingTls = spawnSync(process.execPath, ['-e', "require('./config/env.cjs')"], {
     cwd: path.resolve(__dirname, '..'), env: baseEnvironment, encoding: 'utf8'
@@ -105,6 +109,20 @@ test('environment loader selects Render proxy mode only for a Render Web Service
   const otherPlatform = spawnSync(process.execPath, ['-e', script], { cwd: path.resolve(__dirname, '..'), env: { ...common, RENDER: '', RENDER_SERVICE_TYPE: '' }, encoding: 'utf8' })
   assert.equal(otherPlatform.status, 0, otherPlatform.stderr)
   assert.equal(otherPlatform.stdout.trim(), '["loopback"]')
+})
+
+test('production database provider selection fails closed', () => {
+  const script = "require('./config/env.cjs')"
+  const common = { ...process.env, NODE_ENV: 'production', MONEYWISE_BACKEND_AUTH_MODE: 'password-only', AUTH_SECRET: 'a-production-test-secret-longer-than-32-bytes', PUBLIC_BASE_URL: 'https://sync.example.test', MONEYWISE_TLS_TERMINATED: 'true', MONEYWISE_TRUSTED_PROXIES: 'loopback' }
+  const missing = spawnSync(process.execPath, ['-e', script], { cwd: path.resolve(__dirname, '..'), env: { ...common, DATABASE_PROVIDER: '' }, encoding: 'utf8' })
+  assert.notEqual(missing.status, 0)
+  assert.match(missing.stderr, /DATABASE_PROVIDER/)
+  const sqlite = spawnSync(process.execPath, ['-e', script], { cwd: path.resolve(__dirname, '..'), env: { ...common, DATABASE_PROVIDER: 'sqlite' }, encoding: 'utf8' })
+  assert.notEqual(sqlite.status, 0)
+  assert.match(sqlite.stderr, /production requires DATABASE_PROVIDER=turso/)
+  const missingSecrets = spawnSync(process.execPath, ['-e', script], { cwd: path.resolve(__dirname, '..'), env: { ...common, DATABASE_PROVIDER: 'turso', TURSO_DATABASE_URL: '', TURSO_AUTH_TOKEN: '' }, encoding: 'utf8' })
+  assert.notEqual(missingSecrets.status, 0)
+  assert.match(missingSecrets.stderr, /TURSO_DATABASE_URL/)
 })
 
 test('production dev-session endpoint returns 403', async () => {
@@ -159,8 +177,10 @@ test('production registration cannot claim a passwordless legacy dev account or 
   const databasePath = path.join(directory, 'test.sqlite')
 
   async function launch(authMode, nodeEnv) {
-    const backend = createBackend({
+    const backend = await createBackend({
       nodeEnv,
+      databaseProvider: 'sqlite',
+      ...(nodeEnv === 'production' ? { _testOnlyAllowProductionSqlite: true } : {}),
       host: '127.0.0.1',
       port: 0,
       databasePath,
@@ -176,7 +196,7 @@ test('production registration cannot claim a passwordless legacy dev account or 
       baseUrl: `http://127.0.0.1:${backend.server.address().port}`,
       async close() {
         await new Promise((resolve) => backend.server.close(resolve))
-        backend.db.sqlite.close()
+        await backend.database.close()
       }
     }
   }

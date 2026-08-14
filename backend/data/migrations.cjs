@@ -2,6 +2,14 @@ const path = require('node:path')
 const fs = require('node:fs')
 const BetterSqlite3 = require('better-sqlite3')
 const { randomUUID } = require('node:crypto')
+const { SCHEMA_VERSION, SCHEMA_CHECKSUM } = require('./schema.cjs')
+
+function recordSchemaMigration(sqlite, now = new Date()) {
+  sqlite.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL, checksum TEXT NOT NULL)')
+  const existing = sqlite.prepare('SELECT checksum FROM schema_migrations WHERE version = ?').get(SCHEMA_VERSION)
+  if (existing && existing.checksum !== SCHEMA_CHECKSUM) throw new Error(`Schema migration ${SCHEMA_VERSION} checksum mismatch.`)
+  if (!existing) sqlite.prepare('INSERT INTO schema_migrations (version, applied_at, checksum) VALUES (?, ?, ?)').run(SCHEMA_VERSION, now.toISOString(), SCHEMA_CHECKSUM)
+}
 
 function applyMigrationV2(db, injectFailure = () => {}) {
   const sqlite = db.sqlite
@@ -191,6 +199,7 @@ function runMigrations(db, options = {}) {
       UPDATE sessions SET revoked_at = COALESCE(revoked_at, datetime('now'))
       WHERE auth_mode != 'password' OR user_id IN (SELECT id FROM users WHERE password_hash IS NULL OR status != 'active');
     `)
+    recordSchemaMigration(sqlite, options.now)
     return { fromVersion: schemaVersion, toVersion: schemaVersion, backupPath: null }
   }
   const hasExistingSchema = sqlite.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").get().count > 0
@@ -209,6 +218,7 @@ function runMigrations(db, options = {}) {
     options.injectFailure?.('transaction-started')
     applyMigrationV2(db, options.injectFailure)
     sqlite.exec('COMMIT')
+    recordSchemaMigration(sqlite, options.now)
     return { fromVersion: schemaVersion, toVersion: 2, backupPath }
   } catch (error) {
     sqlite.exec('ROLLBACK')
