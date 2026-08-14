@@ -1,6 +1,6 @@
 # Production deployment runbook
 
-This runbook covers first deployment, upgrades, rollback, backup, restore, and disaster recovery. Production releases use Node 24 and immutable application artifacts. SQLite data and backups must reside on persistent storage.
+This runbook covers first deployment, upgrades, rollback, backup, restore, and disaster recovery. Production releases use Node 24 and immutable application artifacts. The production database provider is Turso; local SQLite and its backup tools remain development/self-hosting facilities and are not a Render recovery mechanism.
 
 ## Architecture and TLS boundary
 
@@ -21,18 +21,19 @@ Set secrets in the hosting platform's encrypted environment store, not in reposi
 NODE_ENV=production
 HOST=0.0.0.0
 PORT=<platform port>
-DATABASE_PATH=/data/moneywise-sync.sqlite
-BACKUP_DIRECTORY=/data/backups
+DATABASE_PROVIDER=turso
+TURSO_DATABASE_URL=libsql://<database-host>
+TURSO_AUTH_TOKEN=<database-scoped application token>
 AUTH_SECRET=<at least 32 cryptographically random characters>
 PUBLIC_BASE_URL=https://sync.example.com
 MONEYWISE_TLS_TERMINATED=true
 MONEYWISE_BACKEND_AUTH_MODE=password-only
 MONEYWISE_BACKEND_ACCESS_TOKEN_TTL_MINUTES=15
 MONEYWISE_BACKEND_SESSION_TTL_DAYS=30
-MONEYWISE_BACKUP_MAX_AGE_HOURS=24
-MONEYWISE_BACKUP_INTERVAL_HOURS=24
 MONEYWISE_BACKEND_LOG_LEVEL=info
 ```
+
+Production fails closed unless `DATABASE_PROVIDER=turso` and both Turso credentials are present. These credentials belong only in the backend secret store and must never be returned by an API or included in desktop/mobile configuration. When Turso is selected, local SQLite backup scheduling is disabled and `/health` identifies Turso as the database provider. Independent Turso recovery/export automation is a later deployment phase and is not configured by this repository change.
 
 Production ignores `.env` and `.env.backend` by default. `MONEYWISE_ALLOW_ENV_FILES=true` exists only for controlled self-hosted environments where file permissions and secret rotation are managed externally.
 
@@ -49,17 +50,16 @@ These client URLs are public configuration. Passwords, API secrets, access token
 
 ## First deployment
 
-1. Provision persistent storage with separate database and backup paths.
+1. Provision a Turso database and a database-scoped application token.
 2. Configure TLS termination, certificate renewal, HTTP redirect, and network rules preventing direct container access.
 3. Generate `AUTH_SECRET` using a cryptographically secure secret manager. Do not reuse development credentials.
 4. Set every required environment variable above.
 5. Deploy the immutable backend image built from `backend/Dockerfile`.
-6. Confirm startup succeeds and `/health` reports `password-only` and `sqlite`.
+6. Confirm startup succeeds and `/health` reports `password-only` and `turso`.
 7. Register a test account, verify login/refresh/logout, and confirm `/api/auth/dev-session` returns 403.
-8. Run the first backup: `npm --prefix backend run backup`.
-9. Verify it: `npm --prefix backend run backup:verify`.
-10. Build the signed clients and run `npm run release:verify` from the controlled Windows release runner.
-11. Perform the cross-client synchronization checklist before enabling general access.
+8. Confirm the provider-managed recovery and independent export plan before accepting financial data.
+9. Build the signed clients and run `npm run release:verify` from the controlled Windows release runner.
+10. Perform the cross-client synchronization checklist before enabling general access.
 
 ## Upgrades
 
@@ -86,9 +86,9 @@ Application-only rollback is preferred when the previous application version sup
 
 If the schema or data is incompatible, use the restore procedure below. Never copy an older database over a live writer. Client rollback requires the previously signed installer and matching SHA-256 record.
 
-## Backup schedule and retention
+## Local SQLite backup schedule and retention
 
-The backend checks backup freshness at startup and every `MONEYWISE_BACKUP_INTERVAL_HOURS`; only one backup job can run at a time. Also run `npm --prefix backend run backup` immediately before every deployment. Each backup uses SQLite's online backup API and produces:
+This section applies only when `DATABASE_PROVIDER=sqlite`; it is not a Turso backup or recovery procedure. The backend checks backup freshness at startup and every `MONEYWISE_BACKUP_INTERVAL_HOURS`; only one backup job can run at a time. Also run `npm --prefix backend run backup` immediately before every SQLite deployment. Each backup uses SQLite's online backup API and produces:
 
 - `moneywise-<UTC timestamp>.sqlite`
 - a matching `.sqlite.json` manifest containing creation time, byte size, and SHA-256
@@ -97,7 +97,7 @@ Run `npm --prefix backend run backup:verify` after creation and from monitoring.
 
 Copy verified backups to a second encrypted failure domain. Apply retention appropriate to policy; a recommended baseline is 7 daily, 5 weekly, and 12 monthly copies. Test restoration quarterly. Do not treat the migration backup on the primary disk as disaster recovery.
 
-## Restore procedure
+## Local SQLite restore procedure
 
 1. Stop every backend instance and prevent new writers.
 2. Select a backup and matching manifest from the desired recovery point.
@@ -151,6 +151,6 @@ The default Render configuration still stores `/data/backups` on the same persis
 
 # Trusted proxy and rate limiting
 
-`MONEYWISE_TRUSTED_PROXIES` is mandatory when production TLS is terminated upstream. It accepts explicit peer addresses or the constrained `loopback`, `linklocal`, and `uniquelocal` rules. Forwarded protocol and client-address headers are ignored unless the immediate TCP peer matches a configured rule. The Render deployment uses `uniquelocal`; operators must verify the actual proxy peer range before release and narrow it to explicit addresses where the platform permits.
+`MONEYWISE_TRUSTED_PROXIES` is mandatory when production TLS is terminated upstream. It accepts explicit peer addresses, the constrained `loopback`, `linklocal`, and `uniquelocal` rules, or the Render-specific mode. Render Web Services are detected through documented Render runtime variables; that mode requires Render's overwritten `CF-Connecting-IP`, uses it for client identity, ignores client-controlled `X-Forwarded-For`, and accepts the documented forwarded protocol only across that boundary.
 
 Rate limiting is bounded but process-local. Multiple backend replicas require enforcement at the trusted gateway or a future shared limiter adapter. The repository does not claim distributed rate limiting without an external shared service.
