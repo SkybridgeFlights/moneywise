@@ -91,6 +91,9 @@ test('real remote auth, sessions, rotation, revocation, duplicate accounts, and 
   assert.match(storedA.passwordHash, /^scrypt:/)
   assert.notEqual(storedA.passwordHash, 'correct-horse-battery-a')
   await assert.rejects(() => auth.registerWithPassword({ email: emailA, password: 'another-correct-password', deviceId: 'duplicate' }), /exists/i)
+  const loggedIn = await timed('password_login_ms', () => auth.loginWithPassword({ email: emailA, password: 'correct-horse-battery-a', deviceId: 'login-a' }))
+  assert.equal(loggedIn.user.id, storedA.id)
+  await assert.rejects(() => auth.loginWithPassword({ email: emailA, password: 'incorrect-password', deviceId: 'login-a' }), /Invalid/i)
   assert.equal((await auth.authenticateFromHeader(`Bearer ${registeredA.accessToken}`)).user.id, storedA.id)
   const rotated = await timed('refresh_rotation_ms', () => auth.refreshSession({ refreshToken: registeredA.refreshToken, deviceId: 'a' }))
   await assert.rejects(() => auth.refreshSession({ refreshToken: registeredA.refreshToken, deviceId: 'a' }), /Invalid/)
@@ -98,6 +101,11 @@ test('real remote auth, sessions, rotation, revocation, duplicate accounts, and 
   await auth.logout(principal.session.id)
   assert.equal(await auth.authenticateFromHeader(`Bearer ${rotated.accessToken}`), null)
   await assert.rejects(() => sessions.create({ id: `${prefix}-orphan`, userId: `${prefix}-missing`, tokenHash: `${prefix}-orphan-token`, label: 'orphan', authMode: 'password', createdAt: new Date().toISOString(), expiresAt: new Date().toISOString(), lastSeenAt: new Date().toISOString() }))
+  const legacyEmail = `${prefix}-legacy@example.invalid`
+  const now = new Date().toISOString()
+  await users.create({ id: `${prefix}-legacy`, email: legacyEmail, passwordHash: null, status: 'recovery-required', createdAt: now, updatedAt: now })
+  await assert.rejects(() => auth.registerWithPassword({ email: legacyEmail, password: 'correct-horse-battery-legacy', deviceId: 'legacy' }), /exists/i)
+  assert.equal((await users.findByEmail(legacyEmail)).passwordHash, null)
 
   await sync.pushBatch(storedA.id, { deviceId: 'a', requestId: `${prefix}-a-1`, changes: [expense(`${prefix}-shared`, undefined, 'A-owned')] })
   await sync.pushBatch(storedA.id, { deviceId: 'a', requestId: `${prefix}-a-private-request`, changes: [expense(`${prefix}-a-private`, undefined, 'A-private')] })
