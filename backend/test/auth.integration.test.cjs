@@ -95,6 +95,18 @@ test('environment loader requires HTTPS termination and a canonical production U
   assert.equal(valid.status, 0, valid.stderr)
 })
 
+test('environment loader selects Render proxy mode only for a Render Web Service', () => {
+  const script = "console.log(JSON.stringify(require('./config/env.cjs').config.trustedProxies))"
+  const common = { ...process.env, NODE_ENV: 'development', MONEYWISE_TRUSTED_PROXIES: 'loopback' }
+  const renderWeb = spawnSync(process.execPath, ['-e', script], { cwd: path.resolve(__dirname, '..'), env: { ...common, RENDER: 'true', RENDER_SERVICE_TYPE: 'web' }, encoding: 'utf8' })
+  assert.equal(renderWeb.status, 0, renderWeb.stderr)
+  assert.equal(renderWeb.stdout.trim(), '["render"]')
+
+  const otherPlatform = spawnSync(process.execPath, ['-e', script], { cwd: path.resolve(__dirname, '..'), env: { ...common, RENDER: '', RENDER_SERVICE_TYPE: '' }, encoding: 'utf8' })
+  assert.equal(otherPlatform.status, 0, otherPlatform.stderr)
+  assert.equal(otherPlatform.stdout.trim(), '["loopback"]')
+})
+
 test('production dev-session endpoint returns 403', async () => {
   const baseUrl = await start()
   const result = await json(`${baseUrl}/api/auth/dev-session`, {

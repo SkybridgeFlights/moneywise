@@ -51,6 +51,11 @@ function getBoolean(name, fallback = false) {
   throw new Error(`${name} must be true or false.`)
 }
 
+function getTrustedProxies() {
+  if (process.env.RENDER === 'true' && process.env.RENDER_SERVICE_TYPE === 'web') return ['render']
+  return (getFirstValue('MONEYWISE_TRUSTED_PROXIES') ?? '').split(',').map((value) => value.trim()).filter(Boolean)
+}
+
 const config = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   port: getNumber('PORT', getNumber('MONEYWISE_BACKEND_PORT', 8787)),
@@ -70,7 +75,7 @@ const config = {
   ,backupHourlyHours: getNumber('MONEYWISE_BACKUP_KEEP_HOURLY_HOURS', 24)
   ,backupDailyDays: getNumber('MONEYWISE_BACKUP_KEEP_DAILY_DAYS', 30)
   ,backupWeeklyWeeks: getNumber('MONEYWISE_BACKUP_KEEP_WEEKLY_WEEKS', 12)
-  ,trustedProxies: (getFirstValue('MONEYWISE_TRUSTED_PROXIES') ?? '').split(',').map((value) => value.trim()).filter(Boolean)
+  ,trustedProxies: getTrustedProxies()
 }
 
 if (!['password-only', 'hybrid'].includes(config.authMode)) {
