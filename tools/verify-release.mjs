@@ -136,6 +136,22 @@ check('Windows artifacts', () => expectedArtifacts.map((filePath) => {
   return { file: path.basename(filePath), bytes: fs.statSync(filePath).size, sha256: sha256(filePath) }
 }))
 
+check('packaged public sync configuration', () => {
+  const source = fs.readFileSync(path.join(root, 'src', 'main', 'sync-config.ts'), 'utf8')
+  const match = source.match(/PRODUCTION_SYNC_BACKEND_URL\s*=\s*['"]([^'"]+)['"]/)
+  if (!match) throw new Error('Authoritative production sync URL is missing.')
+  const endpoint = new URL(match[1])
+  if (endpoint.protocol !== 'https:' || endpoint.origin !== match[1]) throw new Error('Production sync URL must be an HTTPS origin.')
+  const asarPath = path.join(root, 'release', 'win-unpacked', 'resources', 'app.asar')
+  if (!fs.existsSync(asarPath)) throw new Error('Packaged ASAR is missing.')
+  const { extractFile } = require('@electron/asar')
+  const bundledMain = extractFile(asarPath, path.join('out', 'main', 'index.js')).toString('utf8')
+  if (!bundledMain.includes(match[1]) || !bundledMain.includes('packaged-production')) {
+    throw new Error('Packaged main process does not contain the validated production sync configuration.')
+  }
+  return { endpoint: endpoint.origin, enabledWithoutEnvironment: true }
+})
+
 check('signing environment', () => {
   const link = process.env.CSC_LINK?.trim()
   const password = process.env.CSC_KEY_PASSWORD?.trim()

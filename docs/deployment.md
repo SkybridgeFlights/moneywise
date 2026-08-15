@@ -37,7 +37,7 @@ Production fails closed unless `DATABASE_PROVIDER=turso` and both Turso credenti
 
 Production ignores `.env` and `.env.backend` by default. `MONEYWISE_ALLOW_ENV_FILES=true` exists only for controlled self-hosted environments where file permissions and secret rotation are managed externally.
 
-Desktop and mobile production bundles must use the same origin:
+The packaged desktop client uses the public HTTPS MoneyWise production origin defined once in `src/main/sync-config.ts`; it does not require runtime environment variables. The variables below are only for unpackaged desktop development and Expo bundle configuration:
 
 ```text
 MONEYWISE_SYNC_ENABLED=true

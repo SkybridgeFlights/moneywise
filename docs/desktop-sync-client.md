@@ -29,9 +29,11 @@ It also provides:
 - `Refresh status`
 - `Pause sync on this device`
 
-## Environment
+## Production and development configuration
 
-Desktop sync is still config-based:
+Packaged production builds enable synchronization automatically and use the public HTTPS MoneyWise backend origin compiled into the main-process configuration. Packaged builds ignore runtime sync URL/enablement environment variables, so a normal installed or portable client needs no developer configuration and cannot be redirected by renderer input or an inherited shell variable.
+
+Unpackaged local development can still opt in to an alternate backend:
 
 - `MONEYWISE_SYNC_ENABLED=true`
 - `MONEYWISE_SYNC_URL=http://127.0.0.1:8787`

@@ -119,11 +119,12 @@ app.whenReady().then(() => {
   rotateStartupLog(startupLogPath)
   logMain('Application ready')
   electronApp.setAppUserModelId('com.moneywise.desktop')
-  const { config: syncConfig, debug: syncConfigDebug } = readDesktopSyncConfigWithDebug()
+  const { config: syncConfig, debug: syncConfigDebug } = readDesktopSyncConfigWithDebug({ isPackaged: app.isPackaged })
   logMain('Sync configuration loaded', {
     enabled: syncConfigDebug.enabledParsed,
     configured: Boolean(syncConfigDebug.backendUrl),
-    deviceConfigured: Boolean(syncConfigDebug.deviceId)
+    deviceConfigured: Boolean(syncConfigDebug.deviceId),
+    source: syncConfigDebug.source
   })
   const syncStateStore = new DesktopSyncStateStore(join(logDir, 'moneywise', 'sync-state.json'), createElectronTokenProtector())
   const database = new FinanceDatabase(syncStateStore.getActiveUserId())
