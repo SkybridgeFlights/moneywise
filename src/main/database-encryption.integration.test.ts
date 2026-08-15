@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import Database from 'better-sqlite3-multiple-ciphers'
+import ExcelJS from 'exceljs'
 import { FinanceDatabase } from './database'
 import type { DatabaseKeyProtector } from './local-database-encryption'
 import type { RemoteSyncRecord } from './sync-types'
@@ -106,10 +107,18 @@ describe('FinanceDatabase encrypted profiles', () => {
     const jsonExport = readFileSync(jsonExportPath, 'utf8')
     const csvExport = readFileSync(csvExportPath, 'utf8')
     const spreadsheetSize = statSync(spreadsheetExportPath).size
-    database.close()
     expect(jsonExport).toContain(canaryA)
     expect(jsonExport).toContain('"amount": "123.45"')
     expect(csvExport).toContain(canaryA)
+    expect(csvExport).toContain('4.56')
+    const exportedWorkbook = new ExcelJS.Workbook()
+    await exportedWorkbook.xlsx.readFile(spreadsheetExportPath)
+    const incomesSheet = exportedWorkbook.getWorksheet('Incomes')
+    const amountColumn = (incomesSheet?.getRow(1).values as ExcelJS.CellValue[]).findIndex((value) => value === 'amount')
+    expect(incomesSheet?.getRow(2).getCell(amountColumn).text).toBe('123.45')
+    await database.importData('json', jsonExportPath)
+    expect(database.getDomainState().incomes.find((entry) => entry.id === 'income-a')?.amount).toBe(12345)
+    database.close()
     expect(jsonExport).not.toMatch(/protectedKey|database-key|encryptionKey/i)
     expect(csvExport).not.toMatch(/protectedKey|database-key|encryptionKey/i)
     expect(spreadsheetSize).toBeGreaterThan(0)
