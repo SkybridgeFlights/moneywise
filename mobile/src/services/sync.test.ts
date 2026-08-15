@@ -92,4 +92,20 @@ describe('mobile synchronization contract', () => {
     expect(requestIds[1]).toBe(requestIds[0])
     expect(second.syncState.pendingPush).toBeNull()
   })
+
+  it('clears the in-memory session even when server logout is offline', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('offline') }))
+    const service = new MobileSyncService({ enabled: true, backendUrl: 'https://sync.example.test', deviceId: 'mobile-logout' })
+    const next = await service.logout({
+      ...createEmptySyncState(),
+      authToken: 'access-secret',
+      refreshToken: 'refresh-secret',
+      accessTokenExpiresAt: new Date(Date.now() + 60_000).toISOString(),
+      userId: 'user-logout',
+      accountEmail: 'logout@example.test',
+      authMode: 'password'
+    })
+
+    expect(next).toMatchObject({ authToken: null, refreshToken: null, accessTokenExpiresAt: null, userId: null, accountEmail: null, authMode: null })
+  })
 })

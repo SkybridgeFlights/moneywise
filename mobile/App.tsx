@@ -21,7 +21,7 @@ import type {
 import { getMobileSyncConfig } from './src/services/config'
 import { upsertDebt, upsertExpense, upsertGoal, upsertIncome, deleteEntity, ensureSeedState, updateSettings } from './src/services/repository'
 import { MobileSyncService } from './src/services/sync'
-import { initializeMobileStorage, loadAccountProfile, resetMobileStorage, saveFinanceState, saveSyncState, setActiveMobileProfile } from './src/services/storage'
+import { clearMobileCredentials, initializeMobileStorage, loadAccountProfile, resetMobileStorage, saveFinanceState, saveSyncState, setActiveMobileProfile } from './src/services/storage'
 
 type SyncStatus = {
   phase: 'disabled' | 'idle' | 'syncing' | 'error'
@@ -287,14 +287,16 @@ export default function App(): React.JSX.Element {
 
   async function handleLogout(): Promise<void> {
     await beginAccountTransition()
-    if (syncRef.current.userId) {
+    const userId = syncRef.current.userId
+    if (userId) {
       await Promise.all([
-        saveFinanceState(financeRef.current, syncRef.current.userId),
-        saveSyncState(syncRef.current, syncRef.current.userId)
+        saveFinanceState(financeRef.current, userId),
+        saveSyncState(syncRef.current, userId)
       ])
     }
+    await Promise.all([clearMobileCredentials(userId ?? undefined), setActiveMobileProfile(null)])
     const next = await syncService.logout(syncRef.current)
-    await setActiveMobileProfile(null)
+    await clearMobileCredentials(userId ?? undefined)
     setSyncState(next)
     setFinanceState(createDefaultFinanceState())
     setSyncStatus({ phase: 'idle', message: 'Signed out' })
