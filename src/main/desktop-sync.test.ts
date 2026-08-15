@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -601,6 +601,7 @@ describe('DesktopSyncManager', () => {
         return {
           body: {
             applied: [
+              { entityType: 'settings', recordId: 'settings', version: 1, updatedAt: '2026-04-05T00:00:00.000Z', deletedAt: null },
               {
                 entityType: 'income',
                 recordId: 'income-conflict',
@@ -670,6 +671,7 @@ describe('DesktopSyncManager', () => {
         return {
           body: {
             applied: [
+              { entityType: 'settings', recordId: 'settings', version: 1, updatedAt: '2026-04-06T00:00:00.000Z', deletedAt: null },
               {
                 entityType: 'expense',
                 recordId: 'expense-local',
@@ -690,6 +692,74 @@ describe('DesktopSyncManager', () => {
 
     expect(store.read().cursor).toBe('0')
     expect(store.read().manifest['expense:expense-local']?.remoteVersion).toBe(1)
+  })
+
+  it('does not advance the cursor when a server changes response contains a malformed record', async () => {
+    const state = createEmptyState()
+    state.incomes.push({ id: 'local-safe', name: 'Safe salary', groupName: 'Primary', amount: 1234, date: '2026-04-01', type: 'fixed', recurring: false, notes: '' })
+    const database = new FakeFinanceDatabase(state)
+    const { dir, store } = createStateStore()
+    cleanupDirs.push(dir)
+    store.write({
+      deviceId: 'desktop-malformed', authToken: 'token-malformed', refreshToken: 'refresh-malformed',
+      accessTokenExpiresAt: '2099-01-01T00:00:00.000Z', userId: 'user-malformed', accountEmail: 'malformed@example.test',
+      authMode: 'password', cursor: 'cursor-before', bootstrapCompleted: true, paused: false,
+      lastSyncAt: null, lastError: null, manifest: {}
+    })
+    globalThis.fetch = createFetchMock((url) => {
+      if (url.endsWith('/health')) return { body: { ok: true } }
+      if (url.includes('/api/sync/changes')) return { body: { cursor: 'cursor-after', changes: [{ entityType: 'income', recordId: 'remote-bad', payload: { moneyVersion: 2, amount: 1 } }] } }
+      throw new Error(`Unhandled URL: ${url}`)
+    }) as typeof fetch
+
+    const manager = new DesktopSyncManager(database as never, store, createConfig(), () => undefined)
+    await runSync(manager)
+
+    expect(store.read().cursor).toBe('cursor-before')
+    expect(store.read().lastError).toMatch(/malformed/i)
+    expect(database.getDomainState().incomes).toEqual(state.incomes)
+  })
+
+  it('replays the identical encrypted request after a lost commit response without duplicating the mutation', async () => {
+    const state = createEmptyState()
+    state.expenses.push({ id: 'ambiguous-cent', title: 'One cent', amount: 1, date: '2026-04-01', categoryId: 'misc', paymentMethod: 'card', type: 'variable', recurring: false, notes: '', tags: [], goalId: null, debtId: null, allocationKind: 'spend' })
+    const database = new FakeFinanceDatabase(state)
+    const { dir, store } = createStateStore()
+    cleanupDirs.push(dir)
+    store.write({ ...store.read(), cursor: 'cursor-before', bootstrapCompleted: true })
+    const requests: Array<{ requestId: string; body: string }> = []
+    let committedMutations = 0
+    globalThis.fetch = createFetchMock((url, init) => {
+      if (url.endsWith('/health')) return { body: { ok: true } }
+      if (url.includes('/api/sync/changes')) return { body: { cursor: 'cursor-before', changes: [] } }
+      if (url.endsWith('/api/sync/push')) {
+        const body = String(init?.body)
+        const parsed = JSON.parse(body) as { requestId: string }
+        requests.push({ requestId: parsed.requestId, body })
+        if (requests.length === 1) {
+          committedMutations += 1
+          throw new Error('response lost after commit')
+        }
+        const sent = JSON.parse(body) as { changes: Array<{ entityType: SyncEntityType; recordId: string }> }
+        return { body: { applied: sent.changes.map((change) => ({ ...change, version: 1, updatedAt: '2026-04-01T00:00:00.000Z', deletedAt: null })), conflicts: [] } }
+      }
+      throw new Error(`Unhandled URL: ${url}`)
+    }) as typeof fetch
+
+    await runSync(new DesktopSyncManager(database as never, store, createConfig(), () => undefined))
+    const persistedPending = store.read().pendingPush
+    expect(persistedPending?.requestId).toBe(requests[0]?.requestId)
+    const persistedFiles = readdirSync(dir, { recursive: true }).filter((entry) => String(entry).endsWith('.json'))
+      .map((entry) => readFileSync(join(dir, String(entry)), 'utf8')).join('\n')
+    expect(persistedFiles).not.toContain('One cent')
+    expect(persistedFiles).not.toContain('ambiguous-cent')
+    await runSync(new DesktopSyncManager(database as never, store, createConfig(), () => undefined))
+
+    expect(requests).toHaveLength(2)
+    expect(requests[1]).toEqual(requests[0])
+    expect(committedMutations).toBe(1)
+    expect(store.read().pendingPush).toBeNull()
+    expect(store.read().manifest['expense:ambiguous-cent']?.remoteVersion).toBe(1)
   })
 
   it('uploads all existing local records explicitly and does not re-upload them again after success', async () => {

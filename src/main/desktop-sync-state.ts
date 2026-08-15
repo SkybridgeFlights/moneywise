@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 import type { DesktopSyncStateData, SyncManifestEntry } from './sync-types'
@@ -21,7 +21,20 @@ const EMPTY_STATE: DesktopSyncStateData = {
   paused: false,
   lastSyncAt: null,
   lastError: null,
+  pendingPush: null,
   manifest: {}
+}
+
+function atomicWrite(filePath: string, contents: string): void {
+  const temporaryPath = `${filePath}.tmp`
+  writeFileSync(temporaryPath, contents, { encoding: 'utf8', mode: 0o600 })
+  const descriptor = openSync(temporaryPath, 'r+')
+  try {
+    fsyncSync(descriptor)
+  } finally {
+    closeSync(descriptor)
+  }
+  renameSync(temporaryPath, filePath)
 }
 
 function isManifestEntry(value: unknown): value is SyncManifestEntry {
@@ -59,6 +72,9 @@ function normalizeState(value: unknown): DesktopSyncStateData {
     paused: raw.paused === true,
     lastSyncAt: typeof raw.lastSyncAt === 'string' && raw.lastSyncAt ? raw.lastSyncAt : null,
     lastError: typeof raw.lastError === 'string' && raw.lastError ? raw.lastError : null,
+    pendingPush: raw.pendingPush && typeof raw.pendingPush === 'object' && typeof (raw.pendingPush as Record<string, unknown>).requestId === 'string' && typeof (raw.pendingPush as Record<string, unknown>).body === 'string'
+      ? raw.pendingPush as { requestId: string; body: string }
+      : null,
     manifest
   }
 }
@@ -82,7 +98,7 @@ export class DesktopSyncStateStore {
       if (!existsSync(this.legacyFilePath)) {
         const directory = dirname(this.legacyFilePath)
         if (!existsSync(directory)) mkdirSync(directory, { recursive: true })
-        writeFileSync(this.legacyFilePath, JSON.stringify({ version: 2, state: 'unscoped-quarantined' }, null, 2), 'utf8')
+        atomicWrite(this.legacyFilePath, JSON.stringify({ version: 2, state: 'unscoped-quarantined' }, null, 2))
       }
     }
     const activeUserId = this.readMetadata()
@@ -123,7 +139,7 @@ export class DesktopSyncStateStore {
   private writeMetadata(userId: string | null): void {
     const directory = dirname(this.metadataPath)
     if (!existsSync(directory)) mkdirSync(directory, { recursive: true })
-    writeFileSync(this.metadataPath, JSON.stringify({ version: 2, activeUserId: userId }, null, 2), 'utf8')
+    atomicWrite(this.metadataPath, JSON.stringify({ version: 2, activeUserId: userId }, null, 2))
   }
 
   read(): DesktopSyncStateData {
@@ -139,7 +155,8 @@ export class DesktopSyncStateStore {
       const decrypted = {
         ...raw,
         authToken: typeof raw.authTokenEncrypted === 'string' ? this.tokenProtector.decrypt(raw.authTokenEncrypted) : raw.authToken,
-        refreshToken: typeof raw.refreshTokenEncrypted === 'string' ? this.tokenProtector.decrypt(raw.refreshTokenEncrypted) : raw.refreshToken
+        refreshToken: typeof raw.refreshTokenEncrypted === 'string' ? this.tokenProtector.decrypt(raw.refreshTokenEncrypted) : raw.refreshToken,
+        pendingPush: typeof raw.pendingPushEncrypted === 'string' ? JSON.parse(this.tokenProtector.decrypt(raw.pendingPushEncrypted)) : raw.pendingPush
       }
       const state = normalizeState(decrypted)
       return state
@@ -157,12 +174,13 @@ export class DesktopSyncStateStore {
     if (!existsSync(directory)) {
       mkdirSync(directory, { recursive: true })
     }
-    const { authToken, refreshToken, ...persisted } = next
-    writeFileSync(filePath, JSON.stringify({
+    const { authToken, refreshToken, pendingPush, ...persisted } = next
+    atomicWrite(filePath, JSON.stringify({
       ...persisted,
       authTokenEncrypted: authToken ? this.tokenProtector.encrypt(authToken) : null,
-      refreshTokenEncrypted: refreshToken ? this.tokenProtector.encrypt(refreshToken) : null
-    }, null, 2), 'utf8')
+      refreshTokenEncrypted: refreshToken ? this.tokenProtector.encrypt(refreshToken) : null,
+      pendingPushEncrypted: pendingPush ? this.tokenProtector.encrypt(JSON.stringify(pendingPush)) : null
+    }, null, 2))
     return next
   }
 

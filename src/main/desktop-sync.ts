@@ -109,11 +109,7 @@ function normalizeRemoteChange(value: unknown, entityTypeOverride?: SyncEntityTy
 
 function parseBootstrapPayload(value: unknown): RemoteBootstrapPayload {
   if (!isRecordObject(value)) {
-    return {
-      order: [...SYNC_ENTITY_ORDER],
-      cursor: DEFAULT_CURSOR,
-      records: {}
-    }
+    throw new Error('Malformed synchronization bootstrap response.')
   }
   const order = Array.isArray(value.order)
     ? value.order.map((entry) => normalizeSyncEntityType(entry)).filter((entry): entry is SyncEntityType => Boolean(entry))
@@ -124,11 +120,11 @@ function parseBootstrapPayload(value: unknown): RemoteBootstrapPayload {
       .map(([entityType, entries]) => {
         const normalizedEntityType = normalizeSyncEntityType(entityType)
         if (!normalizedEntityType || !Array.isArray(entries)) {
-          return null
+          throw new Error('Malformed synchronization bootstrap response.')
         }
-        const normalizedEntries = entries
-          .map((entry) => normalizeRemoteChange(entry, normalizedEntityType))
-          .filter((entry): entry is RemoteBootstrapRecord & RemoteSyncRecord => Boolean(entry))
+        const parsedEntries = entries.map((entry) => normalizeRemoteChange(entry, normalizedEntityType))
+        if (parsedEntries.some((entry) => !entry)) throw new Error('Malformed synchronization bootstrap response.')
+        const normalizedEntries = (parsedEntries as RemoteSyncRecord[])
           .map((entry) => ({
             id: entry.recordId,
             payload: entry.payload,
@@ -152,14 +148,15 @@ function parseBootstrapPayload(value: unknown): RemoteBootstrapPayload {
 
 function parseChangesPayload(value: unknown): RemoteChangesPayload {
   if (!isRecordObject(value)) {
-    return { cursor: DEFAULT_CURSOR, changes: [], hasMore: false }
+    throw new Error('Malformed synchronization changes response.')
   }
+  if (!Array.isArray(value.changes) || typeof value.cursor !== 'string' || !value.cursor) throw new Error('Malformed synchronization changes response.')
+  const changes = value.changes.map((entry) => normalizeRemoteChange(entry))
+  if (changes.some((entry) => !entry)) throw new Error('Malformed synchronization changes response.')
   return {
-    cursor: typeof value.cursor === 'string' && value.cursor ? value.cursor : DEFAULT_CURSOR,
+    cursor: value.cursor,
     hasMore: value.hasMore === true,
-    changes: Array.isArray(value.changes)
-      ? value.changes.map((entry) => normalizeRemoteChange(entry)).filter((entry): entry is RemoteSyncRecord => Boolean(entry))
-      : []
+    changes: changes as RemoteSyncRecord[]
   }
 }
 
@@ -188,12 +185,9 @@ function parseSessionResponse(value: unknown): SessionResponse | null {
 }
 
 function parsePushResponse(value: unknown): { applied: PushAppliedRecord[]; conflicts: PushConflictRecord[] } {
-  if (!isRecordObject(value)) {
-    return { applied: [], conflicts: [] }
-  }
+  if (!isRecordObject(value) || !Array.isArray(value.applied) || !Array.isArray(value.conflicts)) throw new Error('Malformed synchronization push response.')
 
-  const applied = Array.isArray(value.applied)
-    ? value.applied
+  const applied = value.applied
         .map((entry) => {
           if (!isRecordObject(entry)) return null
           const entityType = normalizeSyncEntityType(entry.entityType)
@@ -209,10 +203,8 @@ function parsePushResponse(value: unknown): { applied: PushAppliedRecord[]; conf
           } satisfies PushAppliedRecord
         })
         .filter((entry): entry is PushAppliedRecord => Boolean(entry))
-    : []
 
-  const conflicts = Array.isArray(value.conflicts)
-    ? value.conflicts
+  const conflicts = value.conflicts
         .map((entry) => {
           if (!isRecordObject(entry)) return null
           const entityType = normalizeSyncEntityType(entry.entityType)
@@ -230,7 +222,8 @@ function parsePushResponse(value: unknown): { applied: PushAppliedRecord[]; conf
           } satisfies PushConflictRecord
         })
         .filter((entry): entry is PushConflictRecord => Boolean(entry))
-    : []
+
+  if (applied.length !== value.applied.length || conflicts.length !== value.conflicts.length) throw new Error('Malformed synchronization push response.')
 
   return { applied, conflicts }
 }
@@ -379,6 +372,7 @@ export class DesktopSyncManager {
       accountEmail: null,
       authMode: null,
       lastError: null,
+      pendingPush: null,
       paused: true
     })
     this.database.switchAccountProfile(null)
@@ -803,7 +797,7 @@ export class DesktopSyncManager {
       })
     })
 
-    if (forcedChanges.length === 0) {
+    if (forcedChanges.length === 0 && !syncState.pendingPush) {
       this.log('Desktop full upload found no additional records', {
         scannedRecords: localIndex.keyOrder.length
       })
@@ -815,13 +809,13 @@ export class DesktopSyncManager {
       })
     }
 
-    const pushResponse = await this.requestJson(
-      '/api/sync/push',
-      {
-        method: 'POST',
+    const pendingPush = syncState.pendingPush ?? (() => {
+      const requestId = randomUUID()
+      return {
+        requestId,
         body: JSON.stringify({
           deviceId,
-          requestId: randomUUID(),
+          requestId,
           changes: forcedChanges.map((change) => ({
             entityType: change.entityType,
             recordId: change.recordId,
@@ -832,11 +826,22 @@ export class DesktopSyncManager {
             baseVersion: change.baseVersion
           }))
         })
+      }
+    })()
+    if (!syncState.pendingPush) syncState = this.stateStore.write({ ...syncState, pendingPush })
+    const sentChanges = (JSON.parse(pendingPush.body) as { changes: PendingSyncChange[] }).changes
+    const sentByKey = new Map(sentChanges.map((change) => [createSyncRecordKey(change.entityType, change.recordId), change]))
+    const pushResponse = await this.requestJson(
+      '/api/sync/push',
+      {
+        method: 'POST',
+        body: pendingPush.body
       },
       syncState.authToken
     )
 
     const parsedPush = parsePushResponse(pushResponse)
+    if (parsedPush.applied.length + parsedPush.conflicts.length !== sentChanges.length) throw new Error('Malformed synchronization push response.')
     this.log('Desktop full upload push executed', {
       scannedRecords: localIndex.keyOrder.length,
       uploadedRecords: forcedChanges.length,
@@ -850,7 +855,7 @@ export class DesktopSyncManager {
       nextManifest[key] = {
         entityType: entry.entityType,
         recordId: entry.recordId,
-        lastSyncedHash: mapAppliedHash(refreshedIndex.records.get(key), entry.deletedAt),
+        lastSyncedHash: entry.deletedAt ? null : sentByKey.get(key)?.payload ? hashPayload(sentByKey.get(key)!.payload) : mapAppliedHash(refreshedIndex.records.get(key), entry.deletedAt),
         remoteVersion: entry.version,
         updatedAt: entry.updatedAt,
         deletedAt: entry.deletedAt
@@ -878,6 +883,7 @@ export class DesktopSyncManager {
       ...syncState,
       cursor: nextCursor,
       bootstrapCompleted: true,
+      pendingPush: null,
       manifest: nextManifest
     })
   }
@@ -892,13 +898,13 @@ export class DesktopSyncManager {
       return syncState
     }
 
-    const response = await this.requestJson(
-      '/api/sync/push',
-      {
-        method: 'POST',
+    const pendingPush = syncState.pendingPush ?? (() => {
+      const requestId = randomUUID()
+      return {
+        requestId,
         body: JSON.stringify({
           deviceId,
-          requestId: randomUUID(),
+          requestId,
           changes: pendingChanges.map((change) => ({
             entityType: change.entityType,
             recordId: change.recordId,
@@ -909,11 +915,23 @@ export class DesktopSyncManager {
             baseVersion: change.baseVersion
           }))
         })
+      }
+    })()
+    if (!syncState.pendingPush) syncState = this.stateStore.write({ ...syncState, pendingPush })
+    const sentChanges = (JSON.parse(pendingPush.body) as { changes: PendingSyncChange[] }).changes
+    const sentByKey = new Map(sentChanges.map((change) => [createSyncRecordKey(change.entityType, change.recordId), change]))
+
+    const response = await this.requestJson(
+      '/api/sync/push',
+      {
+        method: 'POST',
+        body: pendingPush.body
       },
       syncState.authToken
     )
 
     const parsed = parsePushResponse(response)
+    if (parsed.applied.length + parsed.conflicts.length !== sentChanges.length) throw new Error('Malformed synchronization push response.')
     const refreshedIndex = buildSyncableStateIndex(this.database.getDomainState())
     const nextManifest = { ...syncState.manifest }
     const nextCursor = syncState.cursor ?? DEFAULT_CURSOR
@@ -923,7 +941,7 @@ export class DesktopSyncManager {
       nextManifest[key] = {
         entityType: entry.entityType,
         recordId: entry.recordId,
-        lastSyncedHash: mapAppliedHash(refreshedIndex.records.get(key), entry.deletedAt),
+        lastSyncedHash: entry.deletedAt ? null : sentByKey.get(key)?.payload ? hashPayload(sentByKey.get(key)!.payload) : mapAppliedHash(refreshedIndex.records.get(key), entry.deletedAt),
         remoteVersion: entry.version,
         updatedAt: entry.updatedAt,
         deletedAt: entry.deletedAt
@@ -946,6 +964,7 @@ export class DesktopSyncManager {
     const nextState = this.stateStore.write({
       ...syncState,
       cursor: nextCursor,
+      pendingPush: null,
       manifest: nextManifest
     })
 
