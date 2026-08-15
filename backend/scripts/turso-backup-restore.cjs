@@ -1,7 +1,4 @@
 const assert = require('node:assert/strict')
-const fs = require('node:fs')
-const os = require('node:os')
-const path = require('node:path')
 const { randomUUID } = require('node:crypto')
 const { spawnSync } = require('node:child_process')
 const { createClient } = require('@libsql/client')
@@ -24,10 +21,10 @@ function requiredEnvironment(name) {
   if (!value) throw new Error(`${name} is required.`)
   return value
 }
-function runTurso(args, token) {
+function runTurso(args, token, input) {
   const environment = Object.fromEntries(['PATH', 'HOME', 'USERPROFILE', 'XDG_CONFIG_HOME', 'SystemRoot', 'PATHEXT'].filter((name) => process.env[name]).map((name) => [name, process.env[name]]))
   environment.TURSO_API_TOKEN = token
-  const result = spawnSync('turso', args, { encoding: 'utf8', env: environment, shell: false })
+  const result = spawnSync('turso', args, { encoding: 'utf8', env: environment, shell: false, input })
   if (result.status !== 0) throw new Error(`Turso CLI command failed (${args.slice(0, 3).join(' ')}).`)
   return result.stdout.trim()
 }
@@ -114,9 +111,9 @@ async function verifyBackendBehavior(database) {
 async function main() {
   let generationId = argument('--generation')
   const newDatabaseName = argument('--database-name')
-  const retainedDatabaseName = argument('--cleanup-retained')
+  const retainedDatabaseNames = (argument('--cleanup-retained') ?? '').split(',').filter(Boolean)
   if (!generationId || !newDatabaseName || !/^mw-restore-[a-z0-9-]+$/.test(newDatabaseName)) throw new Error('Provide --generation and a disposable --database-name beginning with mw-restore-.')
-  if (retainedDatabaseName && (!/^mw-restore-[a-z0-9-]+$/.test(retainedDatabaseName) || retainedDatabaseName === newDatabaseName)) throw new Error('Retained cleanup target must be a different disposable mw-restore- database.')
+  if (retainedDatabaseNames.some((name) => !/^mw-restore-[a-z0-9-]+$/.test(name) || name === newDatabaseName)) throw new Error('Every retained cleanup target must be a different disposable mw-restore- database.')
   if (process.argv.includes('--cutover')) throw new Error('This tool never performs production cutover.')
   const platformToken = requiredEnvironment('TURSO_API_TOKEN')
   const organization = requiredEnvironment('TURSO_ORG')
@@ -133,13 +130,11 @@ async function main() {
   const dump = verifyAndDecrypt(artifact.body, manifest, decodeEncryptionKey(requiredEnvironment('BACKUP_ENCRYPTION_KEY')))
   assert.ok(dump.length > 0)
   const expected = inspectDump(dump)
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'moneywise-turso-restore-'))
-  const dumpPath = path.join(directory, 'database.sql')
   let created = false
   try {
-    fs.writeFileSync(dumpPath, dump, { flag: 'wx', mode: 0o600 })
-    runTurso(['db', 'create', newDatabaseName, '--from-dump', dumpPath, '--wait'], platformToken)
+    runTurso(['db', 'create', newDatabaseName, '--wait'], platformToken)
     created = true
+    runTurso(['db', 'shell', newDatabaseName], platformToken, dump)
     const databaseUrl = runTurso(['db', 'show', newDatabaseName, '--url'], platformToken)
     const databaseToken = await createDatabaseToken(organization, newDatabaseName, platformToken)
     assert.match(databaseUrl, /^libsql:\/\//)
@@ -152,13 +147,11 @@ async function main() {
     } finally { await database.close() }
     runTurso(['db', 'destroy', newDatabaseName, '--yes'], platformToken)
     created = false
-    if (retainedDatabaseName) runTurso(['db', 'destroy', retainedDatabaseName, '--yes'], platformToken)
+    for (const retainedDatabaseName of retainedDatabaseNames) runTurso(['db', 'destroy', retainedDatabaseName, '--yes'], platformToken)
     process.stdout.write(`RESTORE_DRILL generation=${generationId} database=${newDatabaseName} download=pass decrypt=pass plaintext_hash=pass import=pass schema=pass counts=pass foreign_keys=pass revisions=pass ownership=pass representative_data=pass backend_behavior=pass cutover_simulation=pass cleanup=pass production_modified=no\n`)
   } catch (error) {
     if (created) process.stderr.write(`Restore drill failed; disposable database ${newDatabaseName} retained for diagnosis.\n`)
     throw error
-  } finally {
-    fs.rmSync(directory, { recursive: true, force: true })
   }
 }
 
