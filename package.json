@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Professional desktop app for personal finance, budgeting, and smart money allocation.",
   "main": "out/main/index.js",
-  "author": "OpenAI Codex",
+  "author": "MoneyWise",
   "license": "MIT",
   "type": "module",
   "scripts": {
