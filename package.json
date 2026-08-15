@@ -18,16 +18,17 @@
     "preview": "electron-vite preview",
     "backend:start": "node backend/index.cjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "package:win": "npm.cmd run build && electron-builder --win nsis portable",
+    "rebuild:electron": "electron-rebuild --force --which-module better-sqlite3-multiple-ciphers",
+    "package:win": "npm.cmd run build && npm.cmd run rebuild:electron && electron-builder --win nsis portable",
     "release:verify": "node tools/verify-release.mjs",
     "release:verify:unsigned": "node tools/verify-release.mjs --allow-unsigned",
     "release:win": "npm run package:win && npm run release:verify",
-    "package:mac": "npm.cmd run build && electron-builder --mac dmg"
+    "package:mac": "npm.cmd run build && npm.cmd run rebuild:electron && electron-builder --mac dmg"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^4.0.0",
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3-multiple-ciphers": "12.11.1",
     "date-fns": "^4.4.0",
     "exceljs": "^4.4.0",
     "lucide-react": "^0.511.0",
@@ -38,6 +39,7 @@
     "zod": "^3.25.42"
   },
   "devDependencies": {
+    "@electron/rebuild": "4.2.0",
     "@eslint/js": "^9.39.0",
     "@types/node": "^22.20.1",
     "@types/papaparse": "^5.3.16",
@@ -65,6 +67,7 @@
     "appId": "com.moneywise.desktop",
     "productName": "MoneyWise",
     "asar": true,
+    "npmRebuild": false,
     "directories": {
       "output": "release"
     },

@@ -1,7 +1,7 @@
-import Database from 'better-sqlite3'
+import Database from 'better-sqlite3-multiple-ciphers'
 import { addDays, addMonths, differenceInCalendarDays, differenceInMonths, format, parseISO } from 'date-fns'
 import { app } from 'electron'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import Papa from 'papaparse'
@@ -47,6 +47,12 @@ import type {
 import { debtInputSchema, snapshotImportSchema } from '@shared/validation'
 import type { FinanceRepository } from './finance-repository'
 import type { RemoteSyncRecord, SyncEntityType } from './sync-types'
+import {
+  localDatabaseEncryptionFiles,
+  openEncryptedDatabase,
+  type DatabaseKeyProtector,
+  type EncryptionMigrationStage
+} from './local-database-encryption'
 
 const createId = (prefix: string): string =>
   `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -84,6 +90,12 @@ const defaultRuleForCategory = (category: Pick<Category, 'id' | 'type' | 'monthl
 
 const DEFAULT_FALLBACK_CATEGORY_ID = 'misc'
 
+interface FinanceDatabaseOptions {
+  dataDir?: string
+  keyProtector: DatabaseKeyProtector
+  injectEncryptionMigrationFailure?: (stage: EncryptionMigrationStage) => void
+}
+
 export class FinanceDatabase implements FinanceRepository {
   private db: any
   private dbPath: string
@@ -94,14 +106,20 @@ export class FinanceDatabase implements FinanceRepository {
     conflictDetection: false
   }
 
-  constructor(initialUserId: string | null = null) {
-    this.dataDir = join(app.getPath('userData'), 'moneywise')
+  constructor(initialUserId: string | null = null, private readonly options: FinanceDatabaseOptions) {
+    this.dataDir = options.dataDir ?? join(app.getPath('userData'), 'moneywise')
     if (!existsSync(this.dataDir)) {
       mkdirSync(this.dataDir, { recursive: true })
     }
     this.migrateLegacyDatabase(initialUserId)
-    this.dbPath = this.profileDatabasePath(initialUserId)
-    this.openDatabase()
+    this.dbPath = this.profileEncryptedDatabasePath(initialUserId)
+    this.openDatabase(initialUserId)
+    try {
+      this.removeLegacyDatabaseAfterEncryptedActivation()
+    } catch (error) {
+      this.db.close()
+      throw error
+    }
   }
 
   private profileId(userId: string): string {
@@ -109,52 +127,52 @@ export class FinanceDatabase implements FinanceRepository {
   }
 
   private profileDatabasePath(userId: string | null): string {
-    const directory = userId
-      ? join(this.dataDir, 'profiles', this.profileId(userId))
-      : join(this.dataDir, 'quarantine')
+    const directory = this.profileDirectory(userId)
     mkdirSync(directory, { recursive: true })
     return join(directory, userId ? 'moneywise.sqlite' : 'unscoped-local.sqlite')
+  }
+
+  private profileDirectory(userId: string | null): string {
+    return userId ? join(this.dataDir, 'profiles', this.profileId(userId)) : join(this.dataDir, 'quarantine')
+  }
+
+  private profileEncryptedDatabasePath(userId: string | null): string {
+    return join(this.profileDirectory(userId), localDatabaseEncryptionFiles.encryptedDatabase)
   }
 
   private migrateLegacyDatabase(ownerUserId: string | null): void {
     const legacyPath = join(this.dataDir, 'moneywise.sqlite')
     if (!existsSync(legacyPath)) return
-    const quarantineDirectory = join(this.dataDir, 'quarantine', 'legacy-v1')
-    mkdirSync(quarantineDirectory, { recursive: true })
-    if (ownerUserId) {
-      const targetPath = this.profileDatabasePath(ownerUserId)
-      if (!existsSync(targetPath)) {
-        const legacy = new Database(legacyPath)
-        try {
-          legacy.pragma('wal_checkpoint(FULL)')
-          legacy.prepare('VACUUM INTO ?').run(targetPath)
-          const migrated = new Database(targetPath, { readonly: true })
-          try {
-            if (migrated.pragma('integrity_check', { simple: true }) !== 'ok') throw new Error('Migrated profile failed integrity validation')
-          } finally {
-            migrated.close()
-          }
-        } finally {
-          legacy.close()
-        }
+    const targetPath = this.profileDatabasePath(ownerUserId)
+    for (const suffix of ['', '-wal', '-shm', '-journal']) rmSync(`${targetPath}${suffix}`, { force: true })
+    const legacy = new Database(legacyPath)
+    try {
+      legacy.pragma('wal_checkpoint(FULL)')
+      legacy.prepare('VACUUM INTO ?').run(targetPath)
+      const migrated = new Database(targetPath, { readonly: true })
+      try {
+        if (migrated.pragma('integrity_check', { simple: true }) !== 'ok') throw new Error('Migrated profile failed integrity validation')
+      } finally {
+        migrated.close()
       }
+    } finally {
+      legacy.close()
     }
-    for (const suffix of ['', '-wal', '-shm']) {
-      const source = `${legacyPath}${suffix}`
-      if (!existsSync(source)) continue
-      const target = join(quarantineDirectory, `moneywise.sqlite${suffix}`)
-      if (!existsSync(target)) renameSync(source, target)
-    }
-    writeFileSync(join(quarantineDirectory, 'migration.json'), JSON.stringify({
-      version: 2,
-      migratedAt: new Date().toISOString(),
-      ownership: ownerUserId ? 'deterministic-authenticated-user' : 'unknown-quarantined',
-      ownerProfileId: ownerUserId ? this.profileId(ownerUserId) : null
-    }, null, 2), 'utf8')
   }
 
-  private openDatabase(): void {
-    this.db = new Database(this.dbPath)
+  private removeLegacyDatabaseAfterEncryptedActivation(): void {
+    const legacyPath = join(this.dataDir, 'moneywise.sqlite')
+    for (const suffix of ['-wal', '-shm', '-journal', '']) rmSync(`${legacyPath}${suffix}`, { force: true })
+  }
+
+  private openDatabase(userId: string | null): void {
+    this.db = openEncryptedDatabase({
+      directory: this.profileDirectory(userId),
+      plaintextFilename: userId ? 'moneywise.sqlite' : 'unscoped-local.sqlite',
+      profileId: userId ? this.profileId(userId) : 'unscoped-local',
+      keyProtector: this.options.keyProtector,
+      injectFailure: this.options.injectEncryptionMigrationFailure
+    })
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
     this.db.pragma('synchronous = NORMAL')
@@ -163,12 +181,12 @@ export class FinanceDatabase implements FinanceRepository {
   }
 
   switchAccountProfile(userId: string | null): void {
-    const nextPath = this.profileDatabasePath(userId)
+    const nextPath = this.profileEncryptedDatabasePath(userId)
     if (nextPath === this.dbPath) return
     this.db.pragma('wal_checkpoint(FULL)')
     this.db.close()
     this.dbPath = nextPath
-    this.openDatabase()
+    this.openDatabase(userId)
   }
 
   close(): void {
