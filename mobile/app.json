@@ -60,10 +60,15 @@
       "moneywise": {
         "syncEnabled": true,
         "backendUrl": "https://moneywise-f4jh.onrender.com"
+      },
+      "router": {},
+      "eas": {
+        "projectId": "2756e1f6-2ffa-4639-8c73-55fd94d23258"
       }
     },
     "experiments": {
       "reactCompiler": true
-    }
+    },
+    "owner": "wajd17"
   }
 }
