@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3-multiple-ciphers'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import {
   closeSync,
   copyFileSync,
@@ -57,7 +57,7 @@ interface MigrationState {
 }
 
 interface DatabaseFingerprint {
-  tables: Array<{ name: string; sql: string; rows: number }>
+  tables: Array<{ name: string; sql: string; rows: number; contentSha256: string }>
 }
 
 function atomicWriteJson(filePath: string, value: unknown): void {
@@ -99,11 +99,25 @@ function databaseFingerprint(database: InstanceType<typeof Database>): DatabaseF
     .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
     .all() as Array<{ name: string; sql: string }>
   return {
-    tables: tables.map((table) => ({
-      name: table.name,
-      sql: table.sql,
-      rows: Number((database.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table.name)}`).get() as { count: number }).count)
-    }))
+    tables: tables.map((table) => {
+      const columns = (database.pragma(`table_info(${quoteIdentifier(table.name)})`) as Array<{ name: string }>).map((column) => column.name)
+      const order = columns.map(quoteIdentifier).join(', ')
+      const rows = database.prepare(`SELECT * FROM ${quoteIdentifier(table.name)}${order ? ` ORDER BY ${order}` : ''}`).all() as Array<Record<string, unknown>>
+      const hash = createHash('sha256')
+      hash.update(JSON.stringify(columns))
+      for (const row of rows) {
+        hash.update(JSON.stringify(columns.map((column) => {
+          const value = row[column]
+          if (Buffer.isBuffer(value)) return ['blob', value.toString('hex')]
+          if (typeof value === 'bigint') return ['bigint', value.toString()]
+          if (typeof value === 'number') return ['number', Object.is(value, -0) ? '-0' : String(value)]
+          if (typeof value === 'string') return ['string', value]
+          if (value === null) return ['null']
+          return [typeof value, String(value)]
+        })))
+      }
+      return { name: table.name, sql: table.sql, rows: rows.length, contentSha256: hash.digest('hex') }
+    })
   }
 }
 
