@@ -5,6 +5,7 @@ import { NoticeCard } from '../components/NoticeCard'
 import { RecordCard } from '../components/RecordCard'
 import type { DebtRecord, ExpenseRecord } from '../models/types'
 import { parseDecimalInput } from '../services/repository'
+import { formatMoneyDecimal, moneyDisplayNumber } from '../models/money'
 
 interface DebtsScreenProps {
   records: DebtRecord[]
@@ -15,7 +16,7 @@ interface DebtsScreenProps {
 }
 
 function formatMoney(value: number, currency: string): string {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 2 }).format(value)
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 2 }).format(moneyDisplayNumber(value))
 }
 
 export function DebtsScreen({ records, expenses, currency, onSave, onDelete }: DebtsScreenProps): React.JSX.Element {
@@ -102,8 +103,8 @@ export function DebtsScreen({ records, expenses, currency, onSave, onDelete }: D
               setForm({
                 id: record.id,
                 name: record.name,
-                totalAmount: String(record.totalAmount),
-                installmentAmount: String(record.installmentAmount),
+                totalAmount: formatMoneyDecimal(record.totalAmount),
+                installmentAmount: formatMoneyDecimal(record.installmentAmount),
                 startDate: record.startDate
               })
             }

@@ -1,29 +1,33 @@
+import { formatMoneyDecimal, moneyDisplayNumber, parseMoneyDecimal } from '@shared/money'
+
 export const currencyFormatter = (value: number, currency: string, locale: string): string => {
+  const displayValue = moneyDisplayNumber(value)
   try {
     return new Intl.NumberFormat(locale, {
       style: 'currency',
       currency,
-      minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+      minimumFractionDigits: value % 100 === 0 ? 0 : 2,
       maximumFractionDigits: 2
-    }).format(value)
+    }).format(displayValue)
   } catch {
     return new Intl.NumberFormat(locale, {
-      minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+      minimumFractionDigits: value % 100 === 0 ? 0 : 2,
       maximumFractionDigits: 2
-    }).format(value)
+    }).format(displayValue)
   }
 }
 
 export const percentFormatter = (value: number): string => `${value.toFixed(1)}%`
 
 export const parseDecimalInput = (value: string): number => {
-  const normalized = value.trim().replace(',', '.')
-  if (!normalized) {
-    return 0
+  try {
+    return parseMoneyDecimal(value)
+  } catch {
+    return Number.NaN
   }
-  const parsed = Number(normalized)
-  return Number.isFinite(parsed) ? parsed : 0
 }
+
+export const moneyInputValue = (value: number): string => Number.isSafeInteger(value) ? formatMoneyDecimal(value) : ''
 
 export const todayString = (): string => {
   const now = new Date()

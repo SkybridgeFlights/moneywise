@@ -5,6 +5,7 @@ import { NoticeCard } from '../components/NoticeCard'
 import { RecordCard } from '../components/RecordCard'
 import type { Goal } from '../models/types'
 import { parseDecimalInput } from '../services/repository'
+import { formatMoneyDecimal, moneyDisplayNumber } from '../models/money'
 
 interface GoalsScreenProps {
   records: Goal[]
@@ -15,7 +16,7 @@ interface GoalsScreenProps {
 }
 
 function formatMoney(value: number, currency: string): string {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 2 }).format(value)
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 2 }).format(moneyDisplayNumber(value))
 }
 
 export function GoalsScreen({ records, currency, onSave, onDelete, onOpenDebts }: GoalsScreenProps): React.JSX.Element {
@@ -92,8 +93,8 @@ export function GoalsScreen({ records, currency, onSave, onDelete, onOpenDebts }
               setForm({
                 id: record.id,
                 name: record.name,
-                targetAmount: String(record.targetAmount),
-                currentAmount: String(record.currentAmount),
+                targetAmount: formatMoneyDecimal(record.targetAmount),
+                currentAmount: formatMoneyDecimal(record.currentAmount),
                 targetDate: record.targetDate
               })
             }

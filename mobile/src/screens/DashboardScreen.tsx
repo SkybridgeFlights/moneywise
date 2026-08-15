@@ -2,6 +2,7 @@ import React from 'react'
 import { ScrollView, StyleSheet, Text, View } from 'react-native'
 import { MetricCard } from '../components/MetricCard'
 import type { DashboardAnalytics } from '../models/types'
+import { moneyDisplayNumber } from '../models/money'
 
 interface DashboardScreenProps {
   analytics: DashboardAnalytics
@@ -13,7 +14,7 @@ function formatMoney(value: number, currency: string): string {
     style: 'currency',
     currency,
     maximumFractionDigits: 2
-  }).format(value)
+  }).format(moneyDisplayNumber(value))
 }
 
 export function DashboardScreen({ analytics, currency }: DashboardScreenProps): React.JSX.Element {

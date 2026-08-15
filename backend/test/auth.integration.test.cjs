@@ -224,7 +224,7 @@ test('production registration cannot claim a passwordless legacy dev account or 
       changes: [{
         entityType: 'income',
         recordId: 'victim-private-income',
-        payload: { id: 'victim-private-income', name: 'Private salary', groupName: 'Primary', amount: 5000, date: '2026-08-01', type: 'fixed', recurring: false, notes: '' }
+        payload: { moneyVersion: 2, id: 'victim-private-income', name: 'Private salary', groupName: 'Primary', amount: 500000, date: '2026-08-01', type: 'fixed', recurring: false, notes: '' }
       }]
     })
   })

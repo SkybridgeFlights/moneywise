@@ -315,7 +315,7 @@ describe('DesktopSyncManager', () => {
               settings: [
                 {
                   id: 'settings',
-                  payload: { ...defaultSettings, language: 'ar', currency: 'EUR', locale: 'ar', rtl: true },
+                  payload: { ...defaultSettings, moneyVersion: 2, language: 'ar', currency: 'EUR', locale: 'ar', rtl: true },
                   createdAt: '2026-04-01T00:00:00.000Z',
                   updatedAt: '2026-04-01T00:00:00.000Z',
                   deletedAt: null,
@@ -453,7 +453,7 @@ describe('DesktopSyncManager', () => {
         'income:income-existing': {
           entityType: 'income',
           recordId: 'income-existing',
-          lastSyncedHash: await hashPayload(state.incomes[0] as unknown as Record<string, unknown>),
+          lastSyncedHash: await hashPayload({ ...(state.incomes[0] as unknown as Record<string, unknown>), moneyVersion: 2 }),
           remoteVersion: 1,
           updatedAt: '2026-04-01T00:00:00.000Z',
           deletedAt: null
@@ -461,7 +461,7 @@ describe('DesktopSyncManager', () => {
         'expense:expense-delete': {
           entityType: 'expense',
           recordId: 'expense-delete',
-          lastSyncedHash: await hashPayload(state.expenses[0] as unknown as Record<string, unknown>),
+          lastSyncedHash: await hashPayload({ ...(state.expenses[0] as unknown as Record<string, unknown>), moneyVersion: 2 }),
           remoteVersion: 1,
           updatedAt: '2026-04-01T00:00:00.000Z',
           deletedAt: null
@@ -480,6 +480,7 @@ describe('DesktopSyncManager', () => {
                 entityType: 'income',
                 recordId: 'income-existing',
                 payload: {
+                  moneyVersion: 2,
                   id: 'income-existing',
                   name: 'Salary updated',
                   groupName: 'Primary',
@@ -574,6 +575,7 @@ describe('DesktopSyncManager', () => {
                 entityType: 'income',
                 recordId: 'income-conflict',
                 payload: {
+                  moneyVersion: 2,
                   id: 'income-conflict',
                   name: 'Remote salary',
                   groupName: 'Primary',

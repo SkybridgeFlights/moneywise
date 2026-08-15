@@ -10,6 +10,7 @@ import {
 } from 'date-fns'
 import { defaultSettings } from './defaults'
 import { financeCopy, getCategoryDisplayName } from './i18n'
+import { allocateMoney, decimalToHundredths, divideMoney, multiplyMoneyByBasisPoints, percentageToBasisPoints } from './money'
 import type {
   AlertItem,
   AnalyticsSnapshot,
@@ -43,7 +44,8 @@ interface FinanceInput {
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value))
 const safeDivide = (value: number, total: number): number => (total <= 0 ? 0 : value / total)
-const round2 = (value: number): number => Math.round(value * 100) / 100
+const round2 = (value: number): number => Math.round(value)
+const roundMetric2 = (value: number): number => Math.round(value * 100) / 100
 const isSameOrBefore = (left: Date, right: Date): boolean => left.getTime() <= right.getTime()
 const isDevLoggingEnabled = (): boolean => typeof process !== 'undefined' && process.env.NODE_ENV !== 'production'
 
@@ -156,15 +158,15 @@ function buildCategoryBudgets(
 
     let recommended = 0
     if (budgetPlan && method === 'custom-percentage') {
-      recommended = (availableForPlanning * (rule?.percentage ?? 0)) / 100
+      recommended = multiplyMoneyByBasisPoints(availableForPlanning, percentageToBasisPoints(rule?.percentage ?? 0))
     } else if (rule?.lockedAmount) {
       recommended = rule.lockedAmount
     } else if (budgetPlan && method === 'priority-based') {
-      const totalWeight = budgetPlan.rules.reduce((sum, entry) => sum + entry.priorityWeight, 0) || 1
-      recommended = availableForPlanning * ((rule?.priorityWeight ?? 1) / totalWeight)
+      const totalWeight = budgetPlan.rules.reduce((sum, entry) => sum + decimalToHundredths(entry.priorityWeight, 1_000), 0) || 100
+      recommended = allocateMoney(availableForPlanning, decimalToHundredths(rule?.priorityWeight ?? 1, 1_000), totalWeight)
     } else {
       const sameType = categories.filter((entry) => entry.type === category.type)
-      recommended = (availableForPlanning * (typeBudgets[category.type] / 100)) / Math.max(sameType.length, 1)
+      recommended = divideMoney(multiplyMoneyByBasisPoints(availableForPlanning, typeBudgets[category.type] * 100), Math.max(sameType.length, 1))
     }
 
     if (category.type === 'debt') {
@@ -176,12 +178,12 @@ function buildCategoryBudgets(
 
     const limitAdjusted =
       category.type === 'debt'
-        ? Math.max(recommended, actual * 0.8)
+        ? Math.max(recommended, multiplyMoneyByBasisPoints(actual, 8_000))
         : category.monthlyLimit
-          ? Math.min(Math.max(recommended, actual * 0.8), category.monthlyLimit * 1.15)
+          ? Math.min(Math.max(recommended, multiplyMoneyByBasisPoints(actual, 8_000)), multiplyMoneyByBasisPoints(category.monthlyLimit, 11_500))
           : recommended
-    const finalRecommended = round2(Math.max(limitAdjusted, actual * 0.75))
-    const percentUsed = finalRecommended <= 0 ? 0 : round2((actual / finalRecommended) * 100)
+    const finalRecommended = Math.max(limitAdjusted, multiplyMoneyByBasisPoints(actual, 7_500))
+    const percentUsed = finalRecommended <= 0 ? 0 : roundMetric2((actual / finalRecommended) * 100)
     const status = percentUsed > 110 ? 'danger' : percentUsed > 90 ? 'watch' : 'healthy'
 
     return {
@@ -220,9 +222,9 @@ function buildGoalInsights(
     const daysRemaining = remainingAmount <= 0 ? 0 : Math.max(differenceInCalendarDays(targetDate, today), 1)
     const weeksRemaining = remainingAmount <= 0 ? 0 : Math.max(Math.ceil(daysRemaining / 7), 1)
     const monthsRemaining = remainingAmount <= 0 ? 0 : Math.max(differenceInMonths(targetDate, currentMonthStart), 1)
-    const monthlyRequiredContribution = remainingAmount <= 0 ? 0 : round2(remainingAmount / monthsRemaining)
-    const weeklyRequiredContribution = remainingAmount <= 0 ? 0 : round2(remainingAmount / weeksRemaining)
-    const dailyRequiredContribution = remainingAmount <= 0 ? 0 : round2(remainingAmount / Math.max(daysRemaining, 1))
+    const monthlyRequiredContribution = remainingAmount <= 0 ? 0 : divideMoney(remainingAmount, monthsRemaining)
+    const weeklyRequiredContribution = remainingAmount <= 0 ? 0 : divideMoney(remainingAmount, weeksRemaining)
+    const dailyRequiredContribution = remainingAmount <= 0 ? 0 : divideMoney(remainingAmount, Math.max(daysRemaining, 1))
 
     const totalGoalMonths = Math.max(differenceInMonths(targetDate, parseISO(`${format(parseISO(goal.targetDate), 'yyyy')}-01-01`)), 1)
     const monthsElapsed = Math.max(differenceInMonths(today, parseISO(goal.targetDate)), 0)
@@ -232,9 +234,9 @@ function buildGoalInsights(
     let status: GoalInsight['status'] = 'on-track'
     if (remainingAmount <= 0) {
       status = 'completed'
-    } else if (varianceAmount < -Math.max(monthlyRequiredContribution * 0.5, 1)) {
+    } else if (varianceAmount < -Math.max(divideMoney(monthlyRequiredContribution, 2), 1)) {
       status = 'behind'
-    } else if (varianceAmount > Math.max(monthlyRequiredContribution * 0.5, 1)) {
+    } else if (varianceAmount > Math.max(divideMoney(monthlyRequiredContribution, 2), 1)) {
       status = 'ahead'
     }
 
@@ -245,7 +247,7 @@ function buildGoalInsights(
       goalId: goal.id,
       name: goal.name,
       currentAmount,
-      completionPercent: goal.targetAmount <= 0 ? 0 : round2((currentAmount / goal.targetAmount) * 100),
+      completionPercent: goal.targetAmount <= 0 ? 0 : roundMetric2((currentAmount / goal.targetAmount) * 100),
       remainingAmount,
       targetDate: goal.targetDate,
       monthsRemaining,
@@ -289,7 +291,7 @@ function buildDebtInsights(debts: DebtRecord[], expenses: ExpenseRecord[]): Debt
         )
       : null
     const requiredInstallmentAmount =
-      remainingBalance <= 0 ? 0 : round2(remainingBalance / Math.max(periodsRemaining ?? Math.ceil(remainingBalance / Math.max(debt.installmentAmount, 1)), 1))
+      remainingBalance <= 0 ? 0 : divideMoney(remainingBalance, Math.max(periodsRemaining ?? Math.ceil(remainingBalance / Math.max(debt.installmentAmount, 1)), 1))
     const installmentAmount = round2(
       debt.installmentAmount > 0 ? debt.installmentAmount : requiredInstallmentAmount > 0 ? requiredInstallmentAmount : remainingBalance
     )
@@ -312,7 +314,7 @@ function buildDebtInsights(debts: DebtRecord[], expenses: ExpenseRecord[]): Debt
       installmentAmount,
       paidSoFar,
       remainingBalance,
-      progressPercent: debt.totalAmount <= 0 ? 100 : round2((paidSoFar / debt.totalAmount) * 100),
+      progressPercent: debt.totalAmount <= 0 ? 100 : roundMetric2((paidSoFar / debt.totalAmount) * 100),
       installmentsRemaining,
       payoffDate,
       desiredPayoffDate: debt.desiredPayoffDate ?? debt.endDate ?? null,
@@ -476,14 +478,14 @@ function buildSpendingPlan(
   const remainingSafeAfterFlexible = Math.max(remainingSafePool - Math.max(spentFlexibleToDate - periodSafePool, 0), 0)
 
   return {
-    periodDailySafe: round2(periodSafePool / monthLength),
-    periodWeeklySafe: round2((periodSafePool / monthLength) * 7),
-    remainingDailySafe: round2(remainingSafeAfterFlexible / remainingDays),
-    remainingWeeklySafe: round2(remainingSafeAfterFlexible / remainingWeeks),
+    periodDailySafe: divideMoney(periodSafePool, monthLength),
+    periodWeeklySafe: allocateMoney(periodSafePool, 7, monthLength),
+    remainingDailySafe: divideMoney(remainingSafeAfterFlexible, remainingDays),
+    remainingWeeklySafe: allocateMoney(remainingSafeAfterFlexible, 7, remainingDays),
     unpaidFixedCommitments: round2(unpaidNonDebtFixedCommitments + unpaidDebtCommitments),
     pendingGoalFunding,
     remainingDays,
-    remainingWeeks: round2(remainingWeeks)
+    remainingWeeks: roundMetric2(remainingWeeks)
   }
 }
 
@@ -554,11 +556,11 @@ function buildDashboardMetrics(
     variableExpensesThisMonth: round2(variableSpend),
     remainingAfterFixedExpenses,
     remainingAfterFixedAndVariableExpenses,
-    savingsRate: round2(safeDivide(savingsSpend, totalIncome) * 100),
-    debtRatio: round2(safeDivide(debtLoad, totalIncome) * 100),
-    essentialRatio: round2(safeDivide(essentialSpend, totalIncome) * 100),
-    variableRatio: round2(safeDivide(variableSpend, totalIncome) * 100),
-    budgetHealthScore: round2(normalizedScore),
+    savingsRate: roundMetric2(safeDivide(savingsSpend, totalIncome) * 100),
+    debtRatio: roundMetric2(safeDivide(debtLoad, totalIncome) * 100),
+    essentialRatio: roundMetric2(safeDivide(essentialSpend, totalIncome) * 100),
+    variableRatio: roundMetric2(safeDivide(variableSpend, totalIncome) * 100),
+    budgetHealthScore: roundMetric2(normalizedScore),
     riskLevel,
     disposableCash: round2(totalIncome - essentialSpend - debtLoad),
     goalContributionCapacity: round2(Math.max(remainingBalance - spendingPlan.unpaidFixedCommitments, 0)),
@@ -621,13 +623,13 @@ function buildForecast(
         }, 0)
       : 0
   )
-  const averageDailySpend = variableSpend / elapsedDays
+  const averageDailySpend = divideMoney(variableSpend, elapsedDays)
 
   const byCategoryAverage = new Map<string, number>()
   categories.forEach((category) => {
     const values = priorExpenses.filter((entry) => entry.categoryId === category.id).map((entry) => entry.amount)
     if (values.length > 0) {
-      byCategoryAverage.set(category.id, values.reduce((sum, value) => sum + value, 0) / values.length)
+      byCategoryAverage.set(category.id, divideMoney(values.reduce((sum, value) => sum + value, 0), values.length))
     }
   })
 
@@ -636,16 +638,16 @@ function buildForecast(
     if (!historicalAverage) {
       return entry.amount > 500 && entry.type === 'variable'
     }
-    return entry.amount > historicalAverage * 1.75
+    return entry.amount > multiplyMoneyByBasisPoints(historicalAverage, 17_500)
   })
 
-  const safeDailySpendingUntilMonthEnd = round2(remainingBalance / remainingDaysUntilMonthEnd)
-  const safeWeeklySpendingUntilMonthEnd = round2(remainingBalance / remainingWeeksUntilMonthEnd)
+  const safeDailySpendingUntilMonthEnd = divideMoney(remainingBalance, remainingDaysUntilMonthEnd)
+  const safeWeeklySpendingUntilMonthEnd = allocateMoney(remainingBalance, 7, remainingDaysUntilMonthEnd)
   const adjustedRemainingBalance = round2(
     remainingBalance - futureFixedExpenses - installmentsDueThisMonth - optionalGoalContributionsThisMonth
   )
-  const adjustedSafeDailySpendingUntilMonthEnd = round2(adjustedRemainingBalance / remainingDaysUntilMonthEnd)
-  const adjustedSafeWeeklySpendingUntilMonthEnd = round2(adjustedRemainingBalance / remainingWeeksUntilMonthEnd)
+  const adjustedSafeDailySpendingUntilMonthEnd = divideMoney(adjustedRemainingBalance, remainingDaysUntilMonthEnd)
+  const adjustedSafeWeeklySpendingUntilMonthEnd = allocateMoney(adjustedRemainingBalance, 7, remainingDaysUntilMonthEnd)
   const projectedVariableMonthEndSpend = averageDailySpend * monthLength
   const projectedMonthEndSpend = round2(fixedSpend + projectedVariableMonthEndSpend)
   const projectedMonthEndBalance = round2(carryOverBalance + monthIncome - projectedMonthEndSpend)
@@ -656,7 +658,7 @@ function buildForecast(
     monthEndDate: format(end, 'yyyy-MM-dd'),
     remainingBalance,
     remainingDaysUntilMonthEnd,
-    remainingWeeksUntilMonthEnd: round2(remainingWeeksUntilMonthEnd),
+    remainingWeeksUntilMonthEnd: roundMetric2(remainingWeeksUntilMonthEnd),
     safeDailySpendingUntilMonthEnd,
     safeWeeklySpendingUntilMonthEnd,
     unpaidFixedExpensesDueThisMonth: futureFixedExpenses,
@@ -671,8 +673,8 @@ function buildForecast(
     willRunOutBeforeMonthEnd: projectedMonthEndBalance < 0,
     periodSpendToDate: round2(fixedSpend + variableSpend),
     projectedMonthEndSpend,
-    averageDailySpend: round2((fixedSpend + variableSpend) / elapsedDays),
-    averageWeeklySpend: round2(((fixedSpend + variableSpend) / elapsedDays) * 7),
+    averageDailySpend: divideMoney(fixedSpend + variableSpend, elapsedDays),
+    averageWeeklySpend: allocateMoney(fixedSpend + variableSpend, 7, elapsedDays),
     unusualExpenses
   }
 }
@@ -688,16 +690,16 @@ function buildSmartSpendingPlanner(
     }, 0)
   )
   const remainingUsableBalance = round2(forecast.balanceAfterCommitments)
-  const safeDailySpending = round2(remainingUsableBalance / Math.max(forecast.remainingDaysUntilMonthEnd, 1))
-  const safeWeeklySpending = round2(remainingUsableBalance / Math.max(forecast.remainingWeeksUntilMonthEnd, 1))
+  const safeDailySpending = divideMoney(remainingUsableBalance, Math.max(forecast.remainingDaysUntilMonthEnd, 1))
+  const safeWeeklySpending = allocateMoney(remainingUsableBalance, 7, Math.max(forecast.remainingDaysUntilMonthEnd, 1))
   const averageDailySpend = Math.max(forecast.averageDailySpend, 0)
 
   let status: SmartSpendingPlanner['status'] = 'comfortable'
   if (remainingUsableBalance < 0) {
     status = 'not-enough'
-  } else if (safeDailySpending <= 0 || safeDailySpending < averageDailySpend * 0.75) {
+  } else if (safeDailySpending <= 0 || safeDailySpending < multiplyMoneyByBasisPoints(averageDailySpend, 7_500)) {
     status = 'risky'
-  } else if (safeDailySpending < averageDailySpend * 1.05) {
+  } else if (safeDailySpending < multiplyMoneyByBasisPoints(averageDailySpend, 10_500)) {
     status = 'tight'
   }
 
@@ -738,12 +740,12 @@ function buildAlerts(
         id: `alert-budget-${item.categoryId}`,
         createdAt: now,
         severity: item.percentUsed > 115 ? 'critical' : 'warning',
-        ...financeCopy.alertBudgetExceeded(settings.language, item.categoryName, round2(item.percentUsed - 100)),
+        ...financeCopy.alertBudgetExceeded(settings.language, item.categoryName, roundMetric2(item.percentUsed - 100)),
         module: 'budget'
       })
     })
 
-  if (dashboard.remainingBalance < dashboard.totalIncome * 0.08) {
+  if (dashboard.remainingBalance < multiplyMoneyByBasisPoints(dashboard.totalIncome, 800)) {
     alerts.push({
       id: 'alert-low-balance',
       createdAt: now,

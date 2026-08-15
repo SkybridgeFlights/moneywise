@@ -1,4 +1,5 @@
 import type { DebtRecord, ExpenseRecord, FinanceState, Goal, IncomeRecord } from './types'
+import { divideMoney, multiplyMoneyByBasisPoints } from './money'
 
 export type PlannerPeriodFilter = 'today' | 'week' | 'month' | 'year' | 'previousMonth' | 'previousYear' | 'nextMonth' | 'nextYear'
 
@@ -39,6 +40,10 @@ export interface DateInterval {
 }
 
 function round2(value: number): number {
+  return Math.round(value)
+}
+
+function roundMetric2(value: number): number {
   return Math.round(value * 100) / 100
 }
 
@@ -351,7 +356,7 @@ export function buildBudgetPlanner(state: FinanceState, filter: PlannerPeriodFil
   const isFuturePeriod = interval.start > today
   const effectiveDate = isPastPeriod ? interval.end : isFuturePeriod ? addDays(interval.start, -1) : today
   const remainingDaysInPeriod = isPastPeriod ? 0 : isFuturePeriod ? periodDays : Math.max(differenceInCalendarDays(interval.end, today) + 1, 1)
-  const remainingWeeksInPeriod = round2(remainingDaysInPeriod > 0 ? Math.max(remainingDaysInPeriod / 7, 1) : 0)
+  const remainingWeeksInPeriod = roundMetric2(remainingDaysInPeriod > 0 ? Math.max(remainingDaysInPeriod / 7, 1) : 0)
 
   const openingAvailableBalance = getBalanceBefore(state, interval.start)
   const actualIncome = round2(
@@ -398,8 +403,8 @@ export function buildBudgetPlanner(state: FinanceState, filter: PlannerPeriodFil
       .reduce((sum, entry) => sum + entry.amount, 0)
   )
   const allowedMonthlySpending = round2(balanceAfterCommitments - variableSpentToDate)
-  const allowedWeeklySpending = remainingWeeksInPeriod > 0 ? round2(allowedMonthlySpending / remainingWeeksInPeriod) : 0
-  const allowedDailySpending = remainingDaysInPeriod > 0 ? round2(allowedMonthlySpending / remainingDaysInPeriod) : 0
+  const allowedWeeklySpending = remainingWeeksInPeriod > 0 ? divideMoney(allowedMonthlySpending, remainingWeeksInPeriod) : 0
+  const allowedDailySpending = remainingDaysInPeriod > 0 ? divideMoney(allowedMonthlySpending, remainingDaysInPeriod) : 0
 
   const totalGoalContributed = new Map<string, number>()
   const periodGoalContributed = new Map<string, number>()
@@ -429,7 +434,7 @@ export function buildBudgetPlanner(state: FinanceState, filter: PlannerPeriodFil
   let status: BudgetPlannerSnapshot['status'] = 'comfortable'
   if (allowedMonthlySpending < 0) {
     status = 'not-enough'
-  } else if (allowedDailySpending <= 0 || allowedDailySpending < averageDailyVariableSpend * 1.05) {
+  } else if (allowedDailySpending <= 0 || allowedDailySpending < multiplyMoneyByBasisPoints(averageDailyVariableSpend, 10_500)) {
     status = 'tight'
   }
 

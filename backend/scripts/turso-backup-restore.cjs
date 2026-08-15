@@ -68,7 +68,7 @@ async function verifyRestoredStructure(client, expected) {
 }
 
 function expense(recordId, baseVersion, title = recordId) {
-  return { entityType: 'expense', recordId, payload: { id: recordId, title, amount: 12.34, date: '2026-08-15', categoryId: 'restore-drill', paymentMethod: 'card', type: 'variable', recurring: false, notes: 'Disposable restore drill', tags: [], goalId: null, debtId: null, allocationKind: 'spend' }, ...(baseVersion === undefined ? {} : { baseVersion }) }
+  return { entityType: 'expense', recordId, payload: { moneyVersion: 2, id: recordId, title, amount: 1234, date: '2026-08-15', categoryId: 'restore-drill', paymentMethod: 'card', type: 'variable', recurring: false, notes: 'Disposable restore drill', tags: [], goalId: null, debtId: null, allocationKind: 'spend' }, ...(baseVersion === undefined ? {} : { baseVersion }) }
 }
 
 async function verifyBackendBehavior(database) {

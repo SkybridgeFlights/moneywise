@@ -5,6 +5,7 @@ import { NoticeCard } from '../components/NoticeCard'
 import { RecordCard } from '../components/RecordCard'
 import type { IncomeRecord } from '../models/types'
 import { parseDecimalInput } from '../services/repository'
+import { formatMoneyDecimal, moneyDisplayNumber } from '../models/money'
 
 interface IncomeScreenProps {
   records: IncomeRecord[]
@@ -14,7 +15,7 @@ interface IncomeScreenProps {
 }
 
 function formatMoney(value: number, currency: string): string {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 2 }).format(value)
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 2 }).format(moneyDisplayNumber(value))
 }
 
 const initialForm = {
@@ -83,7 +84,7 @@ export function IncomeScreen({ records, currency, onSave, onDelete }: IncomeScre
               id: record.id,
               name: record.name,
               groupName: record.groupName,
-              amount: String(record.amount),
+              amount: formatMoneyDecimal(record.amount),
               date: record.date
             })
           }

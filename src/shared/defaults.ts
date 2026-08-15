@@ -1,4 +1,7 @@
 import type { BudgetPlan, Category, DebtRecord, Goal, IncomeRecord, ExpenseRecord, Settings } from './types'
+import { parseMoneyDecimal } from './money'
+
+const money = (value: string): number => parseMoneyDecimal(value)
 
 export const defaultSettings: Settings = {
   language: 'ar',
@@ -15,21 +18,21 @@ export const defaultSettings: Settings = {
 }
 
 export const defaultCategories: Category[] = [
-  { id: 'housing', name: 'Housing / Rent', type: 'essential', color: '#3b82f6', icon: 'building', monthlyLimit: 1800, builtIn: true },
-  { id: 'food', name: 'Food / Groceries', type: 'essential', color: '#10b981', icon: 'utensils', monthlyLimit: 650, builtIn: true },
-  { id: 'transportation', name: 'Transportation', type: 'essential', color: '#f59e0b', icon: 'car', monthlyLimit: 350, builtIn: true },
-  { id: 'utilities', name: 'Utilities', type: 'essential', color: '#06b6d4', icon: 'bolt', monthlyLimit: 280, builtIn: true },
-  { id: 'internet-phone', name: 'Internet / Phone', type: 'essential', color: '#8b5cf6', icon: 'wifi', monthlyLimit: 160, builtIn: true },
-  { id: 'health', name: 'Health', type: 'essential', color: '#ef4444', icon: 'heart-pulse', monthlyLimit: 220, builtIn: true },
-  { id: 'education', name: 'Education', type: 'essential', color: '#0f766e', icon: 'graduation-cap', monthlyLimit: 200, builtIn: true },
-  { id: 'entertainment', name: 'Entertainment', type: 'lifestyle', color: '#ec4899', icon: 'film', monthlyLimit: 180, builtIn: true },
-  { id: 'shopping', name: 'Shopping', type: 'lifestyle', color: '#f97316', icon: 'shopping-bag', monthlyLimit: 240, builtIn: true },
-  { id: 'debt', name: 'Debt / Installments', type: 'debt', color: '#dc2626', icon: 'wallet-cards', monthlyLimit: 420, builtIn: true },
-  { id: 'savings', name: 'Savings', type: 'saving', color: '#22c55e', icon: 'piggy-bank', monthlyLimit: 600, builtIn: true },
-  { id: 'investments', name: 'Investments', type: 'saving', color: '#14b8a6', icon: 'chart-column', monthlyLimit: 250, builtIn: true },
-  { id: 'family', name: 'Family', type: 'essential', color: '#6366f1', icon: 'users', monthlyLimit: 300, builtIn: true },
-  { id: 'emergency', name: 'Emergency', type: 'saving', color: '#84cc16', icon: 'shield-alert', monthlyLimit: 350, builtIn: true },
-  { id: 'misc', name: 'Miscellaneous', type: 'custom', color: '#64748b', icon: 'ellipsis', monthlyLimit: 150, builtIn: true }
+  { id: 'housing', name: 'Housing / Rent', type: 'essential', color: '#3b82f6', icon: 'building', monthlyLimit: money('1800'), builtIn: true },
+  { id: 'food', name: 'Food / Groceries', type: 'essential', color: '#10b981', icon: 'utensils', monthlyLimit: money('650'), builtIn: true },
+  { id: 'transportation', name: 'Transportation', type: 'essential', color: '#f59e0b', icon: 'car', monthlyLimit: money('350'), builtIn: true },
+  { id: 'utilities', name: 'Utilities', type: 'essential', color: '#06b6d4', icon: 'bolt', monthlyLimit: money('280'), builtIn: true },
+  { id: 'internet-phone', name: 'Internet / Phone', type: 'essential', color: '#8b5cf6', icon: 'wifi', monthlyLimit: money('160'), builtIn: true },
+  { id: 'health', name: 'Health', type: 'essential', color: '#ef4444', icon: 'heart-pulse', monthlyLimit: money('220'), builtIn: true },
+  { id: 'education', name: 'Education', type: 'essential', color: '#0f766e', icon: 'graduation-cap', monthlyLimit: money('200'), builtIn: true },
+  { id: 'entertainment', name: 'Entertainment', type: 'lifestyle', color: '#ec4899', icon: 'film', monthlyLimit: money('180'), builtIn: true },
+  { id: 'shopping', name: 'Shopping', type: 'lifestyle', color: '#f97316', icon: 'shopping-bag', monthlyLimit: money('240'), builtIn: true },
+  { id: 'debt', name: 'Debt / Installments', type: 'debt', color: '#dc2626', icon: 'wallet-cards', monthlyLimit: money('420'), builtIn: true },
+  { id: 'savings', name: 'Savings', type: 'saving', color: '#22c55e', icon: 'piggy-bank', monthlyLimit: money('600'), builtIn: true },
+  { id: 'investments', name: 'Investments', type: 'saving', color: '#14b8a6', icon: 'chart-column', monthlyLimit: money('250'), builtIn: true },
+  { id: 'family', name: 'Family', type: 'essential', color: '#6366f1', icon: 'users', monthlyLimit: money('300'), builtIn: true },
+  { id: 'emergency', name: 'Emergency', type: 'saving', color: '#84cc16', icon: 'shield-alert', monthlyLimit: money('350'), builtIn: true },
+  { id: 'misc', name: 'Miscellaneous', type: 'custom', color: '#64748b', icon: 'ellipsis', monthlyLimit: money('150'), builtIn: true }
 ]
 
 const now = new Date()
@@ -42,7 +45,7 @@ export const demoIncomes: IncomeRecord[] = [
     id: 'income-1',
     name: 'Primary Salary',
     groupName: 'Employment',
-    amount: 4200,
+    amount: money('4200'),
     date: dateInCurrentMonth(1),
     type: 'fixed',
     recurring: true,
@@ -52,7 +55,7 @@ export const demoIncomes: IncomeRecord[] = [
     id: 'income-2',
     name: 'Freelance Design',
     groupName: 'Side Hustle',
-    amount: 720,
+    amount: money('720'),
     date: dateInCurrentMonth(14),
     type: 'variable',
     recurring: false,
@@ -60,7 +63,7 @@ export const demoIncomes: IncomeRecord[] = [
   }
 ]
 
-export const demoExpenses: ExpenseRecord[] = [
+export const demoExpenses: ExpenseRecord[] = ([
   { id: 'expense-1', title: 'Apartment Rent', amount: 1350, date: dateInCurrentMonth(2), categoryId: 'housing', paymentMethod: 'bank', type: 'fixed', recurring: true, notes: 'Monthly rent', tags: ['home'], goalId: null, debtId: null, allocationKind: 'spend' },
   { id: 'expense-2', title: 'Groceries', amount: 420, date: dateInCurrentMonth(5), categoryId: 'food', paymentMethod: 'card', type: 'variable', recurring: true, notes: 'Weekly family groceries', tags: ['family', 'essentials'], goalId: null, debtId: null, allocationKind: 'spend' },
   { id: 'expense-3', title: 'Fuel and transit', amount: 180, date: dateInCurrentMonth(7), categoryId: 'transportation', paymentMethod: 'card', type: 'variable', recurring: true, notes: 'Fuel + metro card', tags: ['commute'], goalId: null, debtId: null, allocationKind: 'spend' },
@@ -73,14 +76,14 @@ export const demoExpenses: ExpenseRecord[] = [
   { id: 'expense-10', title: 'Family support', amount: 210, date: dateInCurrentMonth(18), categoryId: 'family', paymentMethod: 'transfer', type: 'fixed', recurring: true, notes: 'Monthly family support', tags: ['family'], goalId: null, debtId: null, allocationKind: 'spend' },
   { id: 'expense-11', title: 'New clothes', amount: 140, date: dateInCurrentMonth(20), categoryId: 'shopping', paymentMethod: 'card', type: 'variable', recurring: false, notes: 'Seasonal clothes', tags: ['shopping'], goalId: null, debtId: null, allocationKind: 'spend' },
   { id: 'expense-12', title: 'Pharmacy', amount: 68, date: dateInCurrentMonth(21), categoryId: 'health', paymentMethod: 'cash', type: 'variable', recurring: false, notes: 'Medication', tags: ['health'], goalId: null, debtId: null, allocationKind: 'spend' }
-]
+] satisfies ExpenseRecord[]).map((entry) => ({ ...entry, amount: entry.amount * 100 }))
 
 export const demoDebts: DebtRecord[] = [
   {
     id: 'debt-1',
     name: 'Laptop financing',
-    totalAmount: 2280,
-    installmentAmount: 380,
+    totalAmount: money('2280'),
+    installmentAmount: money('380'),
     startDate: dateInCurrentMonth(10),
     endDate: null,
     desiredPayoffDate: null,
@@ -96,8 +99,8 @@ export const demoGoals: Goal[] = [
     id: 'goal-1',
     name: 'Emergency Fund',
     type: 'emergency-fund',
-    targetAmount: 8000,
-    currentAmount: 2450,
+    targetAmount: money('8000'),
+    currentAmount: money('2450'),
     targetDate: `${now.getFullYear() + 1}-06-30`,
     priority: 'high',
     notes: 'Target six months of core expenses'
@@ -106,8 +109,8 @@ export const demoGoals: Goal[] = [
     id: 'goal-2',
     name: 'Travel to Istanbul',
     type: 'travel',
-    targetAmount: 2200,
-    currentAmount: 640,
+    targetAmount: money('2200'),
+    currentAmount: money('640'),
     targetDate: `${now.getFullYear()}-12-01`,
     priority: 'medium',
     notes: 'Short trip fund'
@@ -118,9 +121,9 @@ export const demoBudgetPlan: BudgetPlan = {
   id: 'budget-main',
   month: yyyyMm,
   method: 'goal-first',
-  customSavingsTarget: 550,
-  customEmergencyTarget: 300,
-  debtAcceleration: 80,
+  customSavingsTarget: money('550'),
+  customEmergencyTarget: money('300'),
+  debtAcceleration: money('80'),
   notes: 'Default monthly plan with strong goal funding.',
   rules: defaultCategories.map((category, index) => ({
     categoryId: category.id,

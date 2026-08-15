@@ -4,7 +4,7 @@ function parsePayload(payloadJson) {
 
 function mapRecord(row) {
   if (!row) return null
-  return { syncId: row.sync_id, userId: row.user_id, entityType: row.entity_type, recordId: row.record_id, payload: parsePayload(row.payload_json), createdAt: row.created_at, updatedAt: row.updated_at, deletedAt: row.deleted_at, version: Number(row.version), revision: Number(row.revision), lastModifiedByDeviceId: row.last_modified_by_device_id }
+  return { syncId: row.sync_id, userId: row.user_id, entityType: row.entity_type, recordId: row.record_id, payload: row.deleted_at ? {} : normalizeStoredMoneyPayload(row.entity_type, parsePayload(row.payload_json)), createdAt: row.created_at, updatedAt: row.updated_at, deletedAt: row.deleted_at, version: Number(row.version), revision: Number(row.revision), lastModifiedByDeviceId: row.last_modified_by_device_id }
 }
 
 function groupBootstrap(records) {
@@ -57,3 +57,4 @@ function createRecordRepository(database) {
 }
 
 module.exports = { createRecordRepository }
+const { normalizeStoredMoneyPayload } = require('../domain/moneyPayload.cjs')

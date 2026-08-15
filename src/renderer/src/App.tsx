@@ -35,7 +35,8 @@ import {
   TextAreaField,
   ToggleField
 } from './components/ui'
-import { currencyFormatter, parseDecimalInput, todayString } from './lib/format'
+import { currencyFormatter, moneyInputValue, parseDecimalInput, todayString } from './lib/format'
+import { allocateMoney, divideMoney, multiplyMoneyByBasisPoints } from '@shared/money'
 import {
   applyLanguageToSettings,
   currencyOptions,
@@ -228,7 +229,7 @@ const getExpensePeriodDayCount = (filter: ExpensePeriodFilter): number => {
   return Math.max(differenceInCalendarDays(interval.end, interval.start) + 1, 1)
 }
 
-const round2 = (value: number): number => Math.round(value * 100) / 100
+const round2 = (value: number): number => Math.round(value)
 
 const getBalanceBefore = (snapshot: AppSnapshot, cutoff: Date): number => {
   const correction = snapshot.settings.balanceCorrection
@@ -581,8 +582,8 @@ const getBudgetPlannerStateForInterval = (
   const availableToAllocate = round2(Math.max(balanceAfterCommitments, 0))
   const flexibleBalanceRemaining = round2(availableToAllocate - variableSpentToDate)
   const allowedMonthlySpending = round2(flexibleBalanceRemaining - budgetEngineReserveTotal)
-  const allowedDailySpending = remainingDaysInPeriod > 0 ? round2(allowedMonthlySpending / remainingDaysInPeriod) : 0
-  const allowedWeeklySpending = remainingWeeksInPeriod > 0 ? round2(allowedMonthlySpending / remainingWeeksInPeriod) : 0
+  const allowedDailySpending = remainingDaysInPeriod > 0 ? divideMoney(allowedMonthlySpending, remainingDaysInPeriod) : 0
+  const allowedWeeklySpending = remainingDaysInPeriod > 0 ? allocateMoney(allowedMonthlySpending, 7, remainingDaysInPeriod) : 0
   const balanceAfterGoals = round2(allowedMonthlySpending)
   const allowedDailySpendingAfterGoals = allowedDailySpending
   const allowedWeeklySpendingAfterGoals = allowedWeeklySpending
@@ -597,7 +598,7 @@ const getBudgetPlannerStateForInterval = (
   let status: BudgetPlannerView['status'] = 'comfortable'
   if (allowedMonthlySpending < 0) {
     status = 'not-enough'
-  } else if (allowedDailySpending <= 0 || allowedDailySpending < averageDailyVariableSpend * 1.05) {
+  } else if (allowedDailySpending <= 0 || allowedDailySpending < multiplyMoneyByBasisPoints(averageDailyVariableSpend, 10_500)) {
     status = 'tight'
   }
 
@@ -1808,8 +1809,8 @@ export function App() {
 
   const saveBalanceCorrection = async (currentBalance: number): Promise<void> => {
     if (!settings) return
-    const newBalance = Number.parseFloat(balanceAdjustmentValue.replace(',', '.').trim())
-    if (!Number.isFinite(newBalance)) {
+    const newBalance = parseDecimalInput(balanceAdjustmentValue)
+    if (!Number.isSafeInteger(newBalance)) {
       setActionError(balanceCopy.amountError)
       return
     }
@@ -1841,7 +1842,7 @@ export function App() {
           <div className="form-grid">
             <InputField label={text.income.sourceName} value={incomeForm.name} onChange={(value) => setIncomeForm({ ...incomeForm, name: value })} error={incomeErrors.name} />
             <InputField label={text.income.group} value={incomeForm.groupName} onChange={(value) => setIncomeForm({ ...incomeForm, groupName: value })} hint={text.income.groupHint} />
-            <InputField label={text.income.amount} type="number" value={incomeForm.amount} onChange={(value) => setIncomeForm({ ...incomeForm, amount: parseDecimalInput(value) })} error={incomeErrors.amount} />
+            <InputField label={text.income.amount} type="number" value={moneyInputValue(incomeForm.amount)} onChange={(value) => setIncomeForm({ ...incomeForm, amount: parseDecimalInput(value) })} error={incomeErrors.amount} />
             <InputField label={text.income.date} type="date" value={incomeForm.date} onChange={(value) => setIncomeForm({ ...incomeForm, date: value })} />
             <SelectField label={text.income.type} value={incomeForm.type} options={[{ label: text.income.fixed, value: 'fixed' }, { label: text.income.variable, value: 'variable' }]} onChange={(value) => setIncomeForm({ ...incomeForm, type: value as SaveIncomeInput['type'] })} />
             <ToggleField label={text.income.recurringMonthly} checked={incomeForm.recurring} onChange={(checked) => setIncomeForm({ ...incomeForm, recurring: checked })} />
@@ -1906,7 +1907,7 @@ export function App() {
         <SectionCard title={text.expenses.addTitle} subtitle={text.expenses.addSubtitle}>
           <div className="form-grid">
             <InputField label={text.expenses.title} value={expenseForm.title} onChange={(value) => setExpenseForm({ ...expenseForm, title: value })} error={expenseErrors.title} />
-            <InputField label={text.income.amount} type="number" value={expenseForm.amount} onChange={(value) => setExpenseForm({ ...expenseForm, amount: parseDecimalInput(value) })} error={expenseErrors.amount} />
+            <InputField label={text.income.amount} type="number" value={moneyInputValue(expenseForm.amount)} onChange={(value) => setExpenseForm({ ...expenseForm, amount: parseDecimalInput(value) })} error={expenseErrors.amount} />
             <InputField label={text.expenses.date} type="date" value={expenseForm.date} onChange={(value) => setExpenseForm({ ...expenseForm, date: value })} />
             <SelectField
               label={text.expenses.category}
@@ -2151,8 +2152,8 @@ export function App() {
           <div className="form-grid">
             <InputField label={text.goals.name} value={goalForm.name} onChange={(value) => setGoalForm({ ...goalForm, name: value })} error={goalErrors.name} />
             <SelectField label={text.goals.type} value={goalForm.type} options={(['general', 'emergency-fund', 'travel', 'device', 'debt-payoff', 'large-purchase'] as const).map((value) => ({ label: translateGoalType(value, language), value }))} onChange={(value) => setGoalForm({ ...goalForm, type: value as SaveGoalInput['type'] })} />
-            <InputField label={text.goals.targetAmount} type="number" value={goalForm.targetAmount} onChange={(value) => setGoalForm({ ...goalForm, targetAmount: parseDecimalInput(value) })} error={goalErrors.targetAmount} />
-            <InputField label={text.goals.openingAmount} type="number" value={goalForm.currentAmount} onChange={(value) => setGoalForm({ ...goalForm, currentAmount: parseDecimalInput(value) })} />
+            <InputField label={text.goals.targetAmount} type="number" value={moneyInputValue(goalForm.targetAmount)} onChange={(value) => setGoalForm({ ...goalForm, targetAmount: parseDecimalInput(value) })} error={goalErrors.targetAmount} />
+            <InputField label={text.goals.openingAmount} type="number" value={moneyInputValue(goalForm.currentAmount)} onChange={(value) => setGoalForm({ ...goalForm, currentAmount: parseDecimalInput(value) })} />
             <InputField label={text.goals.targetDate} type="date" value={goalForm.targetDate} onChange={(value) => setGoalForm({ ...goalForm, targetDate: value })} />
             <SelectField label={text.goals.priority} value={goalForm.priority} options={(['high', 'medium', 'low'] as const).map((value) => ({ label: translatePriority(value, language), value }))} onChange={(value) => setGoalForm({ ...goalForm, priority: value as SaveGoalInput['priority'] })} />
             <TextAreaField label={text.goals.notes} value={goalForm.notes} onChange={(value) => setGoalForm({ ...goalForm, notes: value })} />
@@ -2190,7 +2191,7 @@ export function App() {
             options={snapshot.categories.map((entry) => ({ label: translateCategoryName(entry, language), value: entry.id }))}
             onChange={(value) => setGoalContributionForm({ ...goalContributionForm, categoryId: value })}
           />
-          <InputField label={text.goals.contributionAmount} type="number" value={goalContributionForm.amount} onChange={(value) => setGoalContributionForm({ ...goalContributionForm, amount: parseDecimalInput(value) })} />
+          <InputField label={text.goals.contributionAmount} type="number" value={moneyInputValue(goalContributionForm.amount)} onChange={(value) => setGoalContributionForm({ ...goalContributionForm, amount: parseDecimalInput(value) })} />
           <InputField label={text.goals.contributionDate} type="date" value={goalContributionForm.date} onChange={(value) => setGoalContributionForm({ ...goalContributionForm, date: value })} />
           <SelectField
             label={text.expenses.paymentMethod}
@@ -2254,8 +2255,8 @@ export function App() {
         <SectionCard title={text.debts.title} subtitle={text.debts.subtitle}>
           <div className="form-grid">
             <InputField label={text.debts.name} value={debtForm.name} onChange={(value) => setDebtForm({ ...debtForm, name: value })} error={debtErrors.name} />
-            <InputField label={text.debts.totalAmount} type="number" value={debtForm.totalAmount} onChange={(value) => setDebtForm({ ...debtForm, totalAmount: parseDecimalInput(value) })} error={debtErrors.totalAmount} />
-            <InputField label={text.debts.installmentAmount} type="number" value={debtForm.installmentAmount} onChange={(value) => setDebtForm({ ...debtForm, installmentAmount: parseDecimalInput(value) })} />
+            <InputField label={text.debts.totalAmount} type="number" value={moneyInputValue(debtForm.totalAmount)} onChange={(value) => setDebtForm({ ...debtForm, totalAmount: parseDecimalInput(value) })} error={debtErrors.totalAmount} />
+            <InputField label={text.debts.installmentAmount} type="number" value={moneyInputValue(debtForm.installmentAmount)} onChange={(value) => setDebtForm({ ...debtForm, installmentAmount: parseDecimalInput(value) })} />
             <InputField label={text.debts.startDate} type="date" value={debtForm.startDate} onChange={(value) => setDebtForm({ ...debtForm, startDate: value })} />
             <InputField label={text.debts.endDate} type="date" value={debtForm.endDate ?? ''} onChange={(value) => setDebtForm({ ...debtForm, endDate: value || null })} />
             <InputField label={text.debts.desiredPayoffDate} type="date" value={debtForm.desiredPayoffDate ?? ''} onChange={(value) => setDebtForm({ ...debtForm, desiredPayoffDate: value || null })} />
@@ -2433,7 +2434,7 @@ export function App() {
             />
             <InputField label={text.settings.color} value={categoryForm.color} onChange={(value) => setCategoryForm({ ...categoryForm, color: value })} hint={text.settings.colorHint} />
             <SelectField label={text.settings.icon} value={categoryForm.icon} options={iconOptions.map((value) => ({ label: value, value }))} onChange={(value) => setCategoryForm({ ...categoryForm, icon: value })} />
-            <InputField label={text.settings.monthlyLimit} type="number" value={categoryForm.monthlyLimit ?? 0} onChange={(value) => setCategoryForm({ ...categoryForm, monthlyLimit: parseDecimalInput(value) })} />
+            <InputField label={text.settings.monthlyLimit} type="number" value={moneyInputValue(categoryForm.monthlyLimit ?? 0)} onChange={(value) => setCategoryForm({ ...categoryForm, monthlyLimit: parseDecimalInput(value) })} />
             <button className="primary-button" onClick={() => void handleCategorySubmit()} disabled={actionsDisabled || !categoryForm.name.trim()}>
               <Plus size={16} />
               {editingCategoryId ? text.settings.updateCategory : text.settings.saveCategory}

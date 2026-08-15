@@ -50,7 +50,7 @@ interface PushConflictRecord {
 
 const DEFAULT_CURSOR = '0'
 const SYNC_ENTITY_SET = new Set<SyncEntityType>(SYNC_ENTITY_ORDER)
-const DEFAULT_SETTINGS_HASH = hashPayload(defaultSettings as unknown as Record<string, unknown>)
+const DEFAULT_SETTINGS_HASH = hashPayload({ ...(defaultSettings as unknown as Record<string, unknown>), moneyVersion: 2 })
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { defaultSettings } from './defaults'
+import { MAX_MONEY_MINOR_UNITS } from './money'
 
 const trimmedString = (min = 0, max = 120) =>
   z
@@ -18,9 +19,10 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
 }, 'Invalid calendar date')
 const monthId = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)
 const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/)
-const moneyNumber = z.number().finite().min(0).max(999999999)
-const percentageNumber = z.number().finite().min(0).max(100)
-const priorityWeight = z.number().finite().min(0).max(1000)
+const moneyNumber = z.number().int().min(0).max(MAX_MONEY_MINOR_UNITS)
+const twoDecimalMetric = (maximum: number) => z.number().finite().min(0).max(maximum).refine((value) => /^\d+(?:\.\d{1,2})?$/.test(String(value)), 'At most two decimal places are supported.')
+const percentageNumber = twoDecimalMetric(100)
+const priorityWeight = twoDecimalMetric(1000)
 
 export const budgetMethodSchema = z.enum([
   'fifty-thirty-twenty',
@@ -136,9 +138,9 @@ const balanceCorrectionSchema = z
   .object({
     id: trimmedString(1, 80),
     effectiveDate: z.string().datetime(),
-    calculatedBalanceBefore: z.number().finite(),
-    correctedBalance: z.number().finite(),
-    difference: z.number().finite(),
+    calculatedBalanceBefore: z.number().int().min(-MAX_MONEY_MINOR_UNITS).max(MAX_MONEY_MINOR_UNITS),
+    correctedBalance: z.number().int().min(-MAX_MONEY_MINOR_UNITS).max(MAX_MONEY_MINOR_UNITS),
+    difference: z.number().int().min(-MAX_MONEY_MINOR_UNITS).max(MAX_MONEY_MINOR_UNITS),
     note: noteString,
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime()
@@ -163,20 +165,20 @@ export const monthlySummarySchema = z.object({
   month: monthId,
   income: moneyNumber,
   expenses: moneyNumber,
-  savings: z.number().finite(),
+  savings: z.number().int().min(-MAX_MONEY_MINOR_UNITS).max(MAX_MONEY_MINOR_UNITS),
   debtPayments: moneyNumber,
-  closingBalance: z.number().finite()
+  closingBalance: z.number().int().min(-MAX_MONEY_MINOR_UNITS).max(MAX_MONEY_MINOR_UNITS)
 })
 
 export const syncPayloadSchemas = {
-  income: incomeInputSchema,
-  expense: expenseInputSchema,
-  category: categoryInputSchema,
-  budget: budgetPlanInputSchema,
-  goal: goalInputSchema,
-  debt: debtInputSchema,
-  settings: settingsInputSchema,
-  'monthly-summary': monthlySummarySchema
+  income: incomeInputSchema.and(z.object({ moneyVersion: z.literal(2) })),
+  expense: expenseInputSchema.and(z.object({ moneyVersion: z.literal(2) })),
+  category: categoryInputSchema.and(z.object({ moneyVersion: z.literal(2) })),
+  budget: budgetPlanInputSchema.and(z.object({ moneyVersion: z.literal(2) })),
+  goal: goalInputSchema.and(z.object({ moneyVersion: z.literal(2) })),
+  debt: debtInputSchema.and(z.object({ moneyVersion: z.literal(2) })),
+  settings: settingsInputSchema.and(z.object({ moneyVersion: z.literal(2) })),
+  'monthly-summary': monthlySummarySchema.and(z.object({ moneyVersion: z.literal(2) }))
 }
 
 export const exportFormatSchema = z.enum(['json', 'csv', 'xlsx'])

@@ -37,7 +37,7 @@ let auth
 const timings = {}
 
 function expense(recordId, baseVersion, title = recordId) {
-  return { entityType: 'expense', recordId, payload: { id: recordId, title, amount: 10, date: '2026-08-14', categoryId: 'misc', paymentMethod: 'card', type: 'variable', recurring: false, notes: '', tags: [], goalId: null, debtId: null, allocationKind: 'spend' }, ...(baseVersion === undefined ? {} : { baseVersion }) }
+  return { entityType: 'expense', recordId, payload: { moneyVersion: 2, id: recordId, title, amount: 1000, date: '2026-08-14', categoryId: 'misc', paymentMethod: 'card', type: 'variable', recurring: false, notes: '', tags: [], goalId: null, debtId: null, allocationKind: 'spend' }, ...(baseVersion === undefined ? {} : { baseVersion }) }
 }
 
 async function timed(name, callback) {

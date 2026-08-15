@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import Papa from 'papaparse'
 import ExcelJS from 'exceljs'
 import { calculateFinanceSnapshot } from '@shared/finance'
+import { divideMoney, formatMoneyDecimal, parseMoneyDecimal } from '@shared/money'
 import {
   defaultCategories,
   defaultSettings,
@@ -47,6 +48,7 @@ import type {
 import { debtInputSchema, snapshotImportSchema } from '@shared/validation'
 import type { FinanceRepository } from './finance-repository'
 import type { RemoteSyncRecord, SyncEntityType } from './sync-types'
+import { migrateLocalMoneyToMinorUnits, type MoneyMigrationStage } from './local-money-migration'
 import {
   localDatabaseEncryptionFiles,
   openEncryptedDatabase,
@@ -56,7 +58,7 @@ import {
 
 const createId = (prefix: string): string =>
   `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-const round2 = (value: number): number => Math.round(value * 100) / 100
+const round2 = (value: number): number => Math.round(value)
 const isDevLoggingEnabled = (): boolean => typeof process !== 'undefined' && process.env.NODE_ENV !== 'production'
 
 const ensureArray = <T>(value: T[] | null | undefined): T[] => value ?? []
@@ -89,11 +91,86 @@ const defaultRuleForCategory = (category: Pick<Category, 'id' | 'type' | 'monthl
 })
 
 const DEFAULT_FALLBACK_CATEGORY_ID = 'misc'
+const MONEY_EXPORT_FORMAT = 'moneywise-decimal-major-v2'
+
+function decimalMoney(value: number): string {
+  return formatMoneyDecimal(value)
+}
+
+function exportSnapshotWithDecimalMoney(snapshot: AppSnapshot): Record<string, unknown> {
+  return {
+    moneyFormat: MONEY_EXPORT_FORMAT,
+    ...snapshot,
+    incomes: snapshot.incomes.map((entry) => ({ ...entry, amount: decimalMoney(entry.amount) })),
+    expenses: snapshot.expenses.map((entry) => ({ ...entry, amount: decimalMoney(entry.amount) })),
+    categories: snapshot.categories.map((entry) => ({ ...entry, monthlyLimit: entry.monthlyLimit === null ? null : decimalMoney(entry.monthlyLimit) })),
+    goals: snapshot.goals.map((entry) => ({ ...entry, targetAmount: decimalMoney(entry.targetAmount), currentAmount: decimalMoney(entry.currentAmount) })),
+    goalContributions: snapshot.goalContributions.map((entry) => ({ ...entry, amount: decimalMoney(entry.amount) })),
+    debts: snapshot.debts.map((entry) => ({ ...entry, totalAmount: decimalMoney(entry.totalAmount), installmentAmount: decimalMoney(entry.installmentAmount) })),
+    budgetPlans: snapshot.budgetPlans.map((entry) => ({
+      ...entry,
+      customSavingsTarget: decimalMoney(entry.customSavingsTarget),
+      customEmergencyTarget: decimalMoney(entry.customEmergencyTarget),
+      debtAcceleration: decimalMoney(entry.debtAcceleration),
+      rules: entry.rules.map((rule) => ({ ...rule, lockedAmount: rule.lockedAmount === null ? null : decimalMoney(rule.lockedAmount) }))
+    })),
+    settings: {
+      ...snapshot.settings,
+      balanceCorrection: snapshot.settings.balanceCorrection
+        ? {
+            ...snapshot.settings.balanceCorrection,
+            calculatedBalanceBefore: decimalMoney(snapshot.settings.balanceCorrection.calculatedBalanceBefore),
+            correctedBalance: decimalMoney(snapshot.settings.balanceCorrection.correctedBalance),
+            difference: decimalMoney(snapshot.settings.balanceCorrection.difference)
+          }
+        : null
+    },
+    monthlySummaries: snapshot.monthlySummaries.map((entry) => ({
+      ...entry,
+      income: decimalMoney(entry.income), expenses: decimalMoney(entry.expenses), savings: decimalMoney(entry.savings),
+      debtPayments: decimalMoney(entry.debtPayments), closingBalance: decimalMoney(entry.closingBalance)
+    }))
+  }
+}
+
+function importSnapshotDecimalMoney(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value
+  const source = value as Record<string, unknown>
+  const rows = (input: unknown): Array<Record<string, unknown>> => Array.isArray(input) ? input.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object') : []
+  const object = (input: unknown): Record<string, unknown> | null => input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : null
+  const money = (input: unknown, signed = false): number => parseMoneyDecimal(String(input ?? '0'), { allowNegative: signed })
+  const settings = object(source.settings)
+  const correction = object(settings?.balanceCorrection)
+  return {
+    ...source,
+    incomes: rows(source.incomes).map((entry) => ({ ...entry, amount: money(entry.amount) })),
+    expenses: rows(source.expenses).map((entry) => ({ ...entry, amount: money(entry.amount) })),
+    categories: rows(source.categories).map((entry) => ({ ...entry, monthlyLimit: entry.monthlyLimit == null ? null : money(entry.monthlyLimit) })),
+    goals: rows(source.goals).map((entry) => ({ ...entry, targetAmount: money(entry.targetAmount), currentAmount: money(entry.currentAmount) })),
+    goalContributions: rows(source.goalContributions).map((entry) => ({ ...entry, amount: money(entry.amount) })),
+    debts: rows(source.debts).map((entry) => ({ ...entry, totalAmount: money(entry.totalAmount), installmentAmount: money(entry.installmentAmount) })),
+    budgetPlans: rows(source.budgetPlans).map((entry) => ({
+      ...entry,
+      customSavingsTarget: money(entry.customSavingsTarget), customEmergencyTarget: money(entry.customEmergencyTarget), debtAcceleration: money(entry.debtAcceleration),
+      rules: rows(entry.rules).map((rule) => ({ ...rule, lockedAmount: rule.lockedAmount == null ? null : money(rule.lockedAmount) }))
+    })),
+    settings: settings ? {
+      ...settings,
+      balanceCorrection: correction ? {
+        ...correction,
+        calculatedBalanceBefore: money(correction.calculatedBalanceBefore, true),
+        correctedBalance: money(correction.correctedBalance, true),
+        difference: money(correction.difference, true)
+      } : null
+    } : settings
+  }
+}
 
 interface FinanceDatabaseOptions {
   dataDir?: string
   keyProtector: DatabaseKeyProtector
   injectEncryptionMigrationFailure?: (stage: EncryptionMigrationStage) => void
+  injectMoneyMigrationFailure?: (stage: MoneyMigrationStage) => void
 }
 
 export class FinanceDatabase implements FinanceRepository {
@@ -200,7 +277,7 @@ export class FinanceDatabase implements FinanceRepository {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         group_name TEXT NOT NULL,
-        amount REAL NOT NULL,
+        amount INTEGER NOT NULL,
         date TEXT NOT NULL,
         source_id TEXT,
         type TEXT NOT NULL,
@@ -210,7 +287,7 @@ export class FinanceDatabase implements FinanceRepository {
       CREATE TABLE IF NOT EXISTS expenses (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
-        amount REAL NOT NULL,
+        amount INTEGER NOT NULL,
         date TEXT NOT NULL,
         source_id TEXT,
         category_id TEXT NOT NULL,
@@ -229,15 +306,15 @@ export class FinanceDatabase implements FinanceRepository {
         type TEXT NOT NULL,
         color TEXT NOT NULL,
         icon TEXT NOT NULL,
-        monthly_limit REAL,
+        monthly_limit INTEGER,
         built_in INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS goals (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         type TEXT NOT NULL,
-        target_amount REAL NOT NULL,
-        current_amount REAL NOT NULL,
+        target_amount INTEGER NOT NULL,
+        current_amount INTEGER NOT NULL,
         target_date TEXT NOT NULL,
         priority TEXT NOT NULL,
         notes TEXT NOT NULL DEFAULT ''
@@ -246,15 +323,15 @@ export class FinanceDatabase implements FinanceRepository {
         id TEXT PRIMARY KEY,
         goal_id TEXT NOT NULL,
         expense_id TEXT NOT NULL UNIQUE,
-        amount REAL NOT NULL,
+        amount INTEGER NOT NULL,
         date TEXT NOT NULL,
         notes TEXT NOT NULL DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS debts (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        total_amount REAL NOT NULL,
-        installment_amount REAL NOT NULL,
+        total_amount INTEGER NOT NULL,
+        installment_amount INTEGER NOT NULL,
         start_date TEXT NOT NULL,
         end_date TEXT,
         desired_payoff_date TEXT,
@@ -267,9 +344,9 @@ export class FinanceDatabase implements FinanceRepository {
         id TEXT PRIMARY KEY,
         month TEXT NOT NULL,
         method TEXT NOT NULL,
-        custom_savings_target REAL NOT NULL DEFAULT 0,
-        custom_emergency_target REAL NOT NULL DEFAULT 0,
-        debt_acceleration REAL NOT NULL DEFAULT 0,
+        custom_savings_target INTEGER NOT NULL DEFAULT 0,
+        custom_emergency_target INTEGER NOT NULL DEFAULT 0,
+        debt_acceleration INTEGER NOT NULL DEFAULT 0,
         notes TEXT NOT NULL DEFAULT '',
         rules_json TEXT NOT NULL DEFAULT '[]'
       );
@@ -277,7 +354,7 @@ export class FinanceDatabase implements FinanceRepository {
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
         kind TEXT NOT NULL,
-        amount REAL NOT NULL,
+        amount INTEGER NOT NULL,
         day_of_month INTEGER NOT NULL,
         category_id TEXT,
         group_name TEXT,
@@ -305,11 +382,11 @@ export class FinanceDatabase implements FinanceRepository {
       );
       CREATE TABLE IF NOT EXISTS monthly_summaries (
         month TEXT PRIMARY KEY,
-        income REAL NOT NULL,
-        expenses REAL NOT NULL,
-        savings REAL NOT NULL,
-        debt_payments REAL NOT NULL,
-        closing_balance REAL NOT NULL
+        income INTEGER NOT NULL,
+        expenses INTEGER NOT NULL,
+        savings INTEGER NOT NULL,
+        debt_payments INTEGER NOT NULL,
+        closing_balance INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS activity_log (
         id TEXT PRIMARY KEY,
@@ -371,6 +448,18 @@ export class FinanceDatabase implements FinanceRepository {
     }
 
     this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_expenses_goal_date ON expenses(goal_id, date DESC);
+      CREATE INDEX IF NOT EXISTS idx_goal_contributions_goal_date ON goal_contributions(goal_id, date DESC);
+    `)
+
+    migrateLocalMoneyToMinorUnits(this.db, this.options.injectMoneyMigrationFailure)
+
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_incomes_date ON incomes(date DESC);
+      CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date DESC);
+      CREATE INDEX IF NOT EXISTS idx_expenses_category_date ON expenses(category_id, date DESC);
+      CREATE INDEX IF NOT EXISTS idx_goals_target_date ON goals(target_date ASC);
+      CREATE INDEX IF NOT EXISTS idx_budget_plans_month ON budget_plans(month DESC);
       CREATE INDEX IF NOT EXISTS idx_expenses_goal_date ON expenses(goal_id, date DESC);
       CREATE INDEX IF NOT EXISTS idx_goal_contributions_goal_date ON goal_contributions(goal_id, date DESC);
     `)
@@ -888,7 +977,7 @@ export class FinanceDatabase implements FinanceRepository {
         payload.paymentFrequency === 'weekly'
           ? Math.max(Math.ceil(differenceInCalendarDays(end, start) / 7) + 1, 1)
           : Math.max(differenceInMonths(end, start) + 1, 1)
-      installmentAmount = round2(payload.totalAmount / periods)
+      installmentAmount = divideMoney(payload.totalAmount, periods)
     }
 
     return {
@@ -1307,12 +1396,12 @@ export class FinanceDatabase implements FinanceRepository {
   async exportData(format: 'json' | 'csv' | 'xlsx', targetPath: string): Promise<{ success: boolean; filePath: string }> {
     const snapshot = this.createSnapshot()
     if (format === 'json') {
-      writeFileSync(targetPath, JSON.stringify(snapshot, null, 2), 'utf8')
+      writeFileSync(targetPath, JSON.stringify(exportSnapshotWithDecimalMoney(snapshot), null, 2), 'utf8')
       return { success: true, filePath: targetPath }
     }
 
     if (format === 'csv') {
-      const csv = Papa.unparse(snapshot.expenses.map((entry) => ({ ...entry, tags: entry.tags.join('|'), currency: snapshot.settings.currency })))
+      const csv = Papa.unparse(snapshot.expenses.map((entry) => ({ ...entry, amount: decimalMoney(entry.amount), tags: entry.tags.join('|'), currency: snapshot.settings.currency, moneyFormat: MONEY_EXPORT_FORMAT })))
       writeFileSync(targetPath, csv, 'utf8')
       return { success: true, filePath: targetPath }
     }
@@ -1327,19 +1416,19 @@ export class FinanceDatabase implements FinanceRepository {
       worksheet.getRow(1).font = { bold: true }
       worksheet.views = [{ state: 'frozen', ySplit: 1 }]
     }
-    appendSheet('Incomes', snapshot.incomes.map((entry) => ({ ...entry, currency: snapshot.settings.currency })))
-    appendSheet('Expenses', snapshot.expenses.map((entry) => ({ ...entry, tags: entry.tags.join('|'), currency: snapshot.settings.currency })))
-    appendSheet('Goals', snapshot.goals.map((entry) => ({ ...entry, currency: snapshot.settings.currency })))
-    appendSheet('Debts', snapshot.debts.map((entry) => ({ ...entry, currency: snapshot.settings.currency })))
-    appendSheet('GoalContributions', snapshot.goalContributions.map((entry) => ({ ...entry, currency: snapshot.settings.currency })))
-    appendSheet('MonthlySummary', snapshot.monthlySummaries.map((entry) => ({ ...entry, currency: snapshot.settings.currency })))
+    appendSheet('Incomes', snapshot.incomes.map((entry) => ({ ...entry, amount: decimalMoney(entry.amount), currency: snapshot.settings.currency, moneyFormat: MONEY_EXPORT_FORMAT })))
+    appendSheet('Expenses', snapshot.expenses.map((entry) => ({ ...entry, amount: decimalMoney(entry.amount), tags: entry.tags.join('|'), currency: snapshot.settings.currency, moneyFormat: MONEY_EXPORT_FORMAT })))
+    appendSheet('Goals', snapshot.goals.map((entry) => ({ ...entry, targetAmount: decimalMoney(entry.targetAmount), currentAmount: decimalMoney(entry.currentAmount), currency: snapshot.settings.currency, moneyFormat: MONEY_EXPORT_FORMAT })))
+    appendSheet('Debts', snapshot.debts.map((entry) => ({ ...entry, totalAmount: decimalMoney(entry.totalAmount), installmentAmount: decimalMoney(entry.installmentAmount), currency: snapshot.settings.currency, moneyFormat: MONEY_EXPORT_FORMAT })))
+    appendSheet('GoalContributions', snapshot.goalContributions.map((entry) => ({ ...entry, amount: decimalMoney(entry.amount), currency: snapshot.settings.currency, moneyFormat: MONEY_EXPORT_FORMAT })))
+    appendSheet('MonthlySummary', snapshot.monthlySummaries.map((entry) => ({ ...entry, income: decimalMoney(entry.income), expenses: decimalMoney(entry.expenses), savings: decimalMoney(entry.savings), debtPayments: decimalMoney(entry.debtPayments), closingBalance: decimalMoney(entry.closingBalance), currency: snapshot.settings.currency, moneyFormat: MONEY_EXPORT_FORMAT })))
     await workbook.xlsx.writeFile(targetPath)
     return { success: true, filePath: targetPath }
   }
 
   async importData(format: 'json' | 'csv' | 'xlsx', sourcePath: string): Promise<AppSnapshot> {
     if (format === 'json') {
-      const raw = snapshotImportSchema.parse(JSON.parse(readFileSync(sourcePath, 'utf8')))
+      const raw = snapshotImportSchema.parse(importSnapshotDecimalMoney(JSON.parse(readFileSync(sourcePath, 'utf8'))))
       const tx = this.db.transaction(() => {
         this.db.exec(`
           DELETE FROM incomes;
@@ -1399,7 +1488,7 @@ export class FinanceDatabase implements FinanceRepository {
         .forEach((entry) =>
           this.saveExpense({
             title: entry.title,
-            amount: Number(entry.amount),
+            amount: parseMoneyDecimal(entry.amount),
             date: entry.date,
             categoryId: entry.categoryId || 'misc',
             paymentMethod: (entry.paymentMethod as ExpenseRecord['paymentMethod']) || 'card',
@@ -1441,7 +1530,7 @@ export class FinanceDatabase implements FinanceRepository {
         this.saveIncome({
           name: entry.name,
           groupName: entry.groupName ?? 'Imported',
-          amount: Number(entry.amount),
+          amount: parseMoneyDecimal(entry.amount),
           date: entry.date,
           type: (entry.type as IncomeRecord['type']) || 'variable',
           recurring: entry.recurring === 'true',
@@ -1453,7 +1542,7 @@ export class FinanceDatabase implements FinanceRepository {
       if (entry.title && entry.amount && entry.date) {
         this.saveExpense({
           title: entry.title,
-          amount: Number(entry.amount),
+          amount: parseMoneyDecimal(entry.amount),
           date: entry.date,
           categoryId: entry.categoryId || 'misc',
           paymentMethod: (entry.paymentMethod as ExpenseRecord['paymentMethod']) || 'card',
@@ -1471,8 +1560,8 @@ export class FinanceDatabase implements FinanceRepository {
       if (entry.name && entry.totalAmount && entry.startDate) {
         this.saveDebt({
           name: entry.name,
-          totalAmount: Number(entry.totalAmount),
-          installmentAmount: Number(entry.installmentAmount ?? 0),
+          totalAmount: parseMoneyDecimal(entry.totalAmount),
+          installmentAmount: parseMoneyDecimal(entry.installmentAmount ?? '0'),
           startDate: entry.startDate,
           endDate: entry.endDate || null,
           desiredPayoffDate: entry.desiredPayoffDate || null,

@@ -1,4 +1,5 @@
 import type { AppLanguage, BudgetMethod, Category, CategoryBudgetInsight, GoalPriority, GoalType, PaymentMethod } from './types'
+import { formatMoneyDecimal } from './money'
 
 export const languageMeta: Record<AppLanguage, { locale: string; rtl: boolean }> = {
   ar: { locale: 'ar-EG', rtl: true },
@@ -153,8 +154,8 @@ export const financeCopy = {
       : 'One or more goals require unrealistic monthly contributions. Extend target dates or reduce parallel goals.',
   recOverspend: (language: AppLanguage, categoryName: string, amount: number) =>
     language === 'ar'
-      ? `خفّض الإنفاق في ${categoryName} بنحو ${amount.toFixed(2)} هذا الشهر للعودة إلى الخطة.`
-      : `Reduce ${categoryName} by about ${amount.toFixed(2)} this month to return to plan.`,
+      ? `خفّض الإنفاق في ${categoryName} بنحو ${formatMoneyDecimal(amount)} هذا الشهر للعودة إلى الخطة.`
+      : `Reduce ${categoryName} by about ${formatMoneyDecimal(amount)} this month to return to plan.`,
   recZeroIncome: (language: AppLanguage) =>
     language === 'ar'
       ? 'الدخل صفر في الفترة النشطة مع وجود مصروفات. أدخل مصادر الدخل قبل الاعتماد على مؤشرات الميزانية.'

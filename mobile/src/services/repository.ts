@@ -13,11 +13,12 @@ import type {
   SyncEntityType
 } from '../models/types'
 import { budgetSchema, categorySchema, debtSchema, expenseSchema, goalSchema, incomeSchema, monthlySummarySchema, settingsSchema } from '../models/validation'
+import { parseMoneyDecimal } from '../models/money'
 
 const SYNC_ENTITY_ORDER: SyncEntityType[] = ['settings', 'category', 'budget', 'goal', 'debt', 'income', 'expense', 'monthly-summary']
 
 function round2(value: number): number {
-  return Math.round(value * 100) / 100
+  return Math.round(value)
 }
 
 function today(): string {
@@ -35,9 +36,7 @@ function monthId(date = new Date()): string {
 }
 
 export function parseDecimalInput(value: string, fallback = 0): number {
-  const normalized = value.replace(',', '.').trim()
-  const parsed = Number.parseFloat(normalized)
-  return Number.isFinite(parsed) ? parsed : fallback
+  return parseMoneyDecimal(value, fallback)
 }
 
 export function ensureSeedState(state: FinanceState): FinanceState {
@@ -58,7 +57,7 @@ export function buildSyncRecordKey(entityType: SyncEntityType, recordId: string)
 export function buildSyncableStateIndex(state: FinanceState): Map<string, { entityType: SyncEntityType; recordId: string; payload: Record<string, unknown> }> {
   const index = new Map<string, { entityType: SyncEntityType; recordId: string; payload: Record<string, unknown> }>()
   const pushEntry = (entityType: SyncEntityType, recordId: string, payload: Record<string, unknown>): void => {
-    index.set(buildSyncRecordKey(entityType, recordId), { entityType, recordId, payload })
+    index.set(buildSyncRecordKey(entityType, recordId), { entityType, recordId, payload: { ...payload, moneyVersion: 2 } })
   }
 
   pushEntry('settings', 'settings', state.settings as unknown as Record<string, unknown>)

@@ -40,7 +40,7 @@ const providers = [['sqlite', sqliteFixture], ['libsql-local', libsqlFixture]]
 const authConfig = { nodeEnv: 'test', authMode: 'password-only', authSecret: 'contract-test-secret-longer-than-32-characters', sessionTtlDays: 30, accessTokenTtlMinutes: 15 }
 
 function expense(recordId, baseVersion) {
-  return { entityType: 'expense', recordId, payload: { id: recordId, title: recordId, amount: 10, date: '2026-08-14', categoryId: 'misc', paymentMethod: 'card', type: 'variable', recurring: false, notes: '', tags: [], goalId: null, debtId: null, allocationKind: 'spend' }, ...(baseVersion === undefined ? {} : { baseVersion }) }
+  return { entityType: 'expense', recordId, payload: { moneyVersion: 2, id: recordId, title: recordId, amount: 1000, date: '2026-08-14', categoryId: 'misc', paymentMethod: 'card', type: 'variable', recurring: false, notes: '', tags: [], goalId: null, debtId: null, allocationKind: 'spend' }, ...(baseVersion === undefined ? {} : { baseVersion }) }
 }
 
 for (const [name, fixture] of providers) {

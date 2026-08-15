@@ -1,4 +1,5 @@
 import type { DashboardAnalytics, DebtRecord, ExpenseRecord, FinanceState, Goal } from './types'
+import { divideMoney, multiplyMoneyByBasisPoints } from './money'
 
 function monthId(date = new Date()): string {
   const year = date.getFullYear()
@@ -7,6 +8,10 @@ function monthId(date = new Date()): string {
 }
 
 function round2(value: number): number {
+  return Math.round(value)
+}
+
+function roundMetric2(value: number): number {
   return Math.round(value * 100) / 100
 }
 
@@ -93,7 +98,7 @@ function getGoalContributionProgress(goals: Goal[], expenses: ExpenseRecord[], c
     const remainingAmount = Math.max(goal.targetAmount - goal.currentAmount, 0)
     const targetDate = parseRecordDate(goal.targetDate)
     const monthsRemaining = remainingAmount <= 0 ? 0 : Math.max((targetDate.getFullYear() - currentMonthStart.getFullYear()) * 12 + (targetDate.getMonth() - currentMonthStart.getMonth()), 1)
-    const monthlyRequired = remainingAmount <= 0 ? 0 : round2(remainingAmount / monthsRemaining)
+    const monthlyRequired = remainingAmount <= 0 ? 0 : divideMoney(remainingAmount, monthsRemaining)
     result.set(goal.id, { monthlyRequired, contributedThisMonth })
   })
 
@@ -148,7 +153,7 @@ export function computeDashboardAnalytics(state: FinanceState): DashboardAnalyti
   const variableExpensesThisMonth = round2(expenses.filter((entry) => entry.type === 'variable').reduce((total, entry) => total + entry.amount, 0))
   const remainingBalance = round2(totalIncome - totalExpenses)
   const remainingDaysInMonth = daysUntilMonthEnd(now)
-  const remainingWeeksInMonth = round2(Math.max(remainingDaysInMonth / 7, 1))
+  const remainingWeeksInMonth = roundMetric2(Math.max(remainingDaysInMonth / 7, 1))
   const debtSummary = sumDebtBalance(state.debts, state.expenses)
   const debtBalance = round2(debtSummary.remaining)
   const monthlyDebtPayments = round2(debtSummary.paidThisMonth)
@@ -183,16 +188,16 @@ export function computeDashboardAnalytics(state: FinanceState): DashboardAnalyti
       debtInstallmentsDueThisMonth -
       plannedGoalContributionsThisMonth
   )
-  const safeDailySpending = round2(remainingUsableBalance / Math.max(remainingDaysInMonth, 1))
-  const safeWeeklySpending = round2(remainingUsableBalance / Math.max(remainingWeeksInMonth, 1))
-  const averageDailySpend = round2(spentToDate / elapsedDays)
+  const safeDailySpending = divideMoney(remainingUsableBalance, Math.max(remainingDaysInMonth, 1))
+  const safeWeeklySpending = divideMoney(remainingUsableBalance, Math.max(remainingWeeksInMonth, 1))
+  const averageDailySpend = divideMoney(spentToDate, elapsedDays)
 
   let plannerStatus: DashboardAnalytics['smartPlanner']['status'] = 'comfortable'
   if (remainingUsableBalance < 0) {
     plannerStatus = 'not-enough'
-  } else if (safeDailySpending <= 0 || safeDailySpending < averageDailySpend * 0.75) {
+  } else if (safeDailySpending <= 0 || safeDailySpending < multiplyMoneyByBasisPoints(averageDailySpend, 7_500)) {
     plannerStatus = 'risky'
-  } else if (safeDailySpending < averageDailySpend * 1.05) {
+  } else if (safeDailySpending < multiplyMoneyByBasisPoints(averageDailySpend, 10_500)) {
     plannerStatus = 'tight'
   }
 
@@ -210,8 +215,8 @@ export function computeDashboardAnalytics(state: FinanceState): DashboardAnalyti
     remainingGoalAmount,
     remainingDaysInMonth,
     remainingWeeksInMonth,
-    safeDailySpending: round2(remainingBalance / remainingDaysInMonth),
-    safeWeeklySpending: round2(remainingBalance / remainingWeeksInMonth),
+    safeDailySpending: divideMoney(remainingBalance, remainingDaysInMonth),
+    safeWeeklySpending: divideMoney(remainingBalance, remainingWeeksInMonth),
     smartPlanner: {
       currentRemainingBalance,
       remainingUsableBalance,

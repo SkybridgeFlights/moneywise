@@ -108,7 +108,7 @@ export function buildSyncableStateIndex(state: FinanceDomainState): SyncableStat
     records.set(key, {
       entityType,
       recordId,
-      payload: payload as unknown as Record<string, unknown>
+      payload: { ...(payload as unknown as Record<string, unknown>), moneyVersion: 2 }
     })
   }
 

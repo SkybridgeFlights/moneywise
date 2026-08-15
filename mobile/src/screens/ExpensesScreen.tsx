@@ -5,6 +5,7 @@ import { NoticeCard } from '../components/NoticeCard'
 import { RecordCard } from '../components/RecordCard'
 import type { Category, DebtRecord, ExpenseRecord } from '../models/types'
 import { parseDecimalInput } from '../services/repository'
+import { formatMoneyDecimal, moneyDisplayNumber } from '../models/money'
 
 type ExpenseFilter = 'today' | 'week' | 'month' | 'previousMonth' | 'previousYear' | 'nextMonth' | 'nextYear'
 
@@ -25,7 +26,7 @@ interface DateInterval {
 }
 
 function formatMoney(value: number, currency: string, locale: string): string {
-  return new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: 2 }).format(value)
+  return new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: 2 }).format(moneyDisplayNumber(value))
 }
 
 function parseRecordDate(value: string): Date {
@@ -440,7 +441,7 @@ export function ExpensesScreen({ records, categories, debts, currency, locale, l
             setForm({
               id: record.id,
               title: record.title,
-              amount: String(record.amount),
+              amount: formatMoneyDecimal(record.amount),
               date: record.date,
               categoryId: record.categoryId,
               debtId: record.debtId ?? '',

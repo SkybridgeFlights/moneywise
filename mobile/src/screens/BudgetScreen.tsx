@@ -4,6 +4,7 @@ import { MetricCard } from '../components/MetricCard'
 import { NoticeCard } from '../components/NoticeCard'
 import { buildBudgetPlanner, getPlannerPeriodInterval, type PlannerPeriodFilter } from '../models/budgetPlanner'
 import type { FinanceState } from '../models/types'
+import { moneyDisplayNumber, multiplyMoneyByBasisPoints, parseMoneyDecimal } from '../models/money'
 
 interface BudgetScreenProps {
   state: FinanceState
@@ -11,7 +12,7 @@ interface BudgetScreenProps {
 }
 
 function formatMoney(value: number, currency: string, locale: string): string {
-  return new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: 2 }).format(value)
+  return new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: 2 }).format(moneyDisplayNumber(value))
 }
 
 function getCopy(language: 'en' | 'ar') {
@@ -215,7 +216,7 @@ export function BudgetScreen({ state, onUpdateSettings }: BudgetScreenProps): Re
         categoryId,
         categoryName: state.categories.find((entry) => entry.id === categoryId)?.name ?? categoryId,
         amount,
-        reduction: amount * 0.1
+        reduction: multiplyMoneyByBasisPoints(amount, 1_000)
       }))
       .sort((left, right) => right.amount - left.amount)
       .slice(0, 3)
@@ -263,7 +264,7 @@ export function BudgetScreen({ state, onUpdateSettings }: BudgetScreenProps): Re
           allowed: `Allowed daily = flexible remaining / remaining days.\nAllowed weekly = flexible remaining / remaining weeks.\nPeriod: ${periodLabel}.`
         }
   function saveBalanceCorrection(): void {
-    const newBalance = Number.parseFloat(balanceInput.replace(',', '.').trim())
+    const newBalance = parseMoneyDecimal(balanceInput)
     if (!Number.isFinite(newBalance)) return
     const now = new Date().toISOString()
     onUpdateSettings({
@@ -272,7 +273,7 @@ export function BudgetScreen({ state, onUpdateSettings }: BudgetScreenProps): Re
         effectiveDate: now,
         calculatedBalanceBefore: planner.openingAvailableBalance,
         correctedBalance: newBalance,
-        difference: Number((newBalance - planner.openingAvailableBalance).toFixed(2)),
+        difference: newBalance - planner.openingAvailableBalance,
         note: balanceNote.trim(),
         createdAt: now,
         updatedAt: now
