@@ -42,9 +42,8 @@ jobs:
       - name: Install official Turso CLI
         run: |
           curl --proto '=https' --tlsv1.2 -LsSf https://github.com/tursodatabase/turso/releases/download/v0.7.2/turso_cli-installer.sh | sh
-          echo "$HOME/.turso" >> "$GITHUB_PATH"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          export PATH="$HOME/.turso:$HOME/.local/bin:$PATH"
+          source "$HOME/.turso/env"
+          dirname "$(command -v turso)" >> "$GITHUB_PATH"
           turso --version
       - name: Restore, verify, simulate cutover, and clean up disposable database
         working-directory: backend
