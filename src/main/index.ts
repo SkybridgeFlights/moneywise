@@ -10,6 +10,7 @@ import { registerIpcHandlers } from './ipc'
 import { readDesktopSyncConfigWithDebug } from './sync-config'
 import { createElectronTokenProtector } from './electron-token-protector'
 import { createElectronDatabaseKeyProtector } from './electron-database-key-protector'
+import { configureSingleInstance } from './single-instance'
 
 let startupLogPath = ''
 
@@ -111,7 +112,9 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+const isPrimaryInstance = configureSingleInstance(app, () => BrowserWindow.getAllWindows())
+
+if (isPrimaryInstance) app.whenReady().then(() => {
   const logDir = app.getPath('userData')
   if (!existsSync(logDir)) {
     mkdirSync(logDir, { recursive: true })
