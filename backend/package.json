@@ -10,9 +10,13 @@
     "coverage": "node --experimental-test-coverage --test test/*.test.cjs",
     "backup": "node scripts/backup.cjs",
     "backup:verify": "node scripts/verify-backup.cjs",
-    "restore": "node scripts/restore.cjs"
+    "restore": "node scripts/restore.cjs",
+    "backup:turso": "node scripts/turso-backup.cjs",
+    "backup:turso:verify": "node scripts/turso-backup-verify.cjs",
+    "backup:turso:restore": "node scripts/turso-backup-restore.cjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1111.0",
     "@libsql/client": "^0.17.4",
     "better-sqlite3": "12.11.1",
     "zod": "^3.25.42"
