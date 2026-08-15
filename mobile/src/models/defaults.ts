@@ -50,6 +50,7 @@ export function createEmptySyncState(): SyncState {
     paused: false,
     lastSyncAt: null,
     lastError: null,
+    pendingPush: null,
     manifest: {}
   }
 }

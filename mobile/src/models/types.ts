@@ -156,6 +156,7 @@ export interface SyncState {
   paused: boolean
   lastSyncAt: string | null
   lastError: string | null
+  pendingPush: { requestId: string; body: string } | null
   manifest: Record<string, SyncManifestEntry>
 }
 

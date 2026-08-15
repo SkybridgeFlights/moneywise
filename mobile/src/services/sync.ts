@@ -9,6 +9,7 @@ import type {
 } from '../models/types'
 import type { MobileSyncConfig } from './config'
 import { applyRemoteSyncChanges, buildSyncRecordKey, buildSyncableStateIndex } from './repository'
+import { syncPayloadSchemas } from '../models/validation'
 
 const DEFAULT_CURSOR = '0'
 
@@ -17,7 +18,14 @@ function createRequestId(): string {
 }
 const SYNC_ENTITY_ORDER: SyncEntityType[] = ['settings', 'category', 'budget', 'goal', 'debt', 'income', 'expense', 'monthly-summary']
 const SYNC_ENTITY_SET = new Set<SyncEntityType>(SYNC_ENTITY_ORDER)
-const DEFAULT_SETTINGS_HASH = hashPayload(defaultSettings as unknown as Record<string, unknown>)
+const DEFAULT_SETTINGS_HASH = hashPayload({ ...(defaultSettings as unknown as Record<string, unknown>), moneyVersion: 2 })
+
+class PendingPushError extends Error {
+  constructor(message: string, readonly financeState: FinanceState, readonly syncState: SyncState) {
+    super(message)
+    this.name = 'PendingPushError'
+  }
+}
 
 type SyncStatus = {
   phase: 'disabled' | 'idle' | 'syncing' | 'error'
@@ -71,13 +79,19 @@ function normalizeRemoteChange(value: unknown, entityTypeOverride?: SyncEntityTy
   if (!entityType || !recordId || !updatedAt || version === null) {
     return null
   }
+  const deletedAt = typeof value.deletedAt === 'string' ? value.deletedAt : null
+  const rawPayload = isRecordObject(value.payload) ? value.payload : {}
+  const payload = deletedAt ? rawPayload : syncPayloadSchemas[entityType].parse({
+    ...rawPayload,
+    ...(entityType === 'settings' ? {} : entityType === 'monthly-summary' ? { month: recordId } : { id: recordId })
+  }) as Record<string, unknown>
   return {
     entityType,
     recordId,
-    payload: isRecordObject(value.payload) ? value.payload : {},
+    payload,
     createdAt: typeof value.createdAt === 'string' ? value.createdAt : null,
     updatedAt,
-    deletedAt: typeof value.deletedAt === 'string' ? value.deletedAt : null,
+    deletedAt,
     version,
     lastModifiedByDeviceId: typeof value.lastModifiedByDeviceId === 'string' ? value.lastModifiedByDeviceId : null
   }
@@ -234,6 +248,7 @@ export class MobileSyncService {
       bootstrapCompleted: false,
       lastSyncAt: null,
       lastError: null,
+      pendingPush: null,
       manifest: {}
     }
   }
@@ -288,11 +303,13 @@ export class MobileSyncService {
         status: { phase: 'idle', message: 'Sync completed' }
       }
     } catch (error) {
+      const failedFinanceState = error instanceof PendingPushError ? error.financeState : financeState
+      const failedSyncState = error instanceof PendingPushError ? error.syncState : syncState
       return {
-        financeState,
+        financeState: failedFinanceState,
         syncState: {
-          ...syncState,
-          authToken: error instanceof Error && error.message.includes('[401]') ? null : syncState.authToken,
+          ...failedSyncState,
+          authToken: error instanceof Error && error.message.includes('[401]') ? null : failedSyncState.authToken,
           lastError: error instanceof Error ? error.message : 'Sync failed'
         },
         status: {
@@ -361,6 +378,7 @@ export class MobileSyncService {
       bootstrapCompleted: false,
       lastSyncAt: null,
       lastError: null,
+      pendingPush: null,
       manifest: {}
     }
   }
@@ -483,7 +501,7 @@ export class MobileSyncService {
   private async pushLocalChanges(financeState: FinanceState, syncState: SyncState): Promise<{ financeState: FinanceState; syncState: SyncState }> {
     const deviceId = syncState.deviceId ?? this.config.deviceId ?? createDeviceId()
     const pendingChanges = this.collectPendingLocalChanges(financeState, syncState.manifest)
-    if (pendingChanges.length === 0) {
+    if (pendingChanges.length === 0 && !syncState.pendingPush) {
       return {
         financeState,
         syncState: {
@@ -493,28 +511,23 @@ export class MobileSyncService {
       }
     }
 
-    const response = await this.requestJson(
-      '/api/sync/push',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          deviceId,
-          requestId: createRequestId(),
-          changes: pendingChanges.map((change) => ({
-            entityType: change.entityType,
-            recordId: change.recordId,
-            payload: change.payload,
-            deletedAt: change.deletedAt,
-            updatedAt: new Date().toISOString(),
-            lastModifiedByDeviceId: deviceId,
-            baseVersion: change.baseVersion
-          }))
-        })
-      },
-      syncState.authToken
-    )
+    const pendingPush = syncState.pendingPush ?? (() => {
+      const requestId = createRequestId()
+      return { requestId, body: JSON.stringify({ deviceId, requestId, changes: pendingChanges.map((change) => ({
+        entityType: change.entityType, recordId: change.recordId, payload: change.payload, deletedAt: change.deletedAt,
+        updatedAt: new Date().toISOString(), lastModifiedByDeviceId: deviceId, baseVersion: change.baseVersion
+      })) }) }
+    })()
+    let response: unknown
+    try {
+      response = await this.requestJson('/api/sync/push', { method: 'POST', body: pendingPush.body }, syncState.authToken)
+    } catch (error) {
+      throw new PendingPushError(error instanceof Error ? error.message : 'Sync push failed', financeState, { ...syncState, deviceId, pendingPush })
+    }
 
     const parsed = parsePushResponse(response)
+    const sent = JSON.parse(pendingPush.body) as { changes: PendingSyncChange[] }
+    const sentByKey = new Map(sent.changes.map((change) => [buildSyncRecordKey(change.entityType, change.recordId), change]))
     const nextManifest = { ...syncState.manifest }
     const nextCursor = syncState.cursor ?? DEFAULT_CURSOR
 
@@ -523,7 +536,7 @@ export class MobileSyncService {
       nextManifest[key] = {
         entityType: entry.entityType,
         recordId: entry.recordId,
-        lastSyncedHash: mapAppliedHash(financeState, entry.entityType, entry.recordId, entry.deletedAt),
+        lastSyncedHash: entry.deletedAt ? null : sentByKey.get(key)?.payload ? hashPayload(sentByKey.get(key)!.payload) : mapAppliedHash(financeState, entry.entityType, entry.recordId, entry.deletedAt),
         remoteVersion: entry.version,
         updatedAt: entry.updatedAt,
         deletedAt: entry.deletedAt
@@ -548,6 +561,7 @@ export class MobileSyncService {
         ...syncState,
         deviceId,
         cursor: nextCursor,
+        pendingPush: null,
         manifest: nextManifest
       }
     }

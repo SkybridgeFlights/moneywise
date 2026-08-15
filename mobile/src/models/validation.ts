@@ -20,4 +20,9 @@ export const budgetSchema = z.object({ id, month, method: budgetMethod, customSa
 export const monthlySummarySchema = z.object({ month, income: money, expenses: money, savings: z.number().int().min(-99999999999).max(99999999999), debtPayments: money, closingBalance: z.number().int().min(-99999999999).max(99999999999) })
 export const settingsSchema = z.object({ language: z.enum(['en', 'ar']), currency: z.string().regex(/^[A-Z]{3}$/), locale: z.string().min(2).max(16), theme: z.enum(['light', 'dark']), financialMonthStartDay: z.number().int().min(1).max(28), defaultBudgetMethod: budgetMethod, notificationsEnabled: z.boolean(), includeOptionalGoalsInForecast: z.boolean(), backupFrequency: z.enum(['manual', 'weekly', 'monthly']), rtl: z.boolean(), balanceCorrection: z.unknown().nullable().optional() })
 
-export const syncPayloadSchemas = { income: incomeSchema, expense: expenseSchema, category: categorySchema, budget: budgetSchema, goal: goalSchema, debt: debtSchema, settings: settingsSchema, 'monthly-summary': monthlySummarySchema }
+const moneyVersion = z.object({ moneyVersion: z.literal(2) })
+export const syncPayloadSchemas = {
+  income: incomeSchema.and(moneyVersion), expense: expenseSchema.and(moneyVersion), category: categorySchema.and(moneyVersion),
+  budget: budgetSchema.and(moneyVersion), goal: goalSchema.and(moneyVersion), debt: debtSchema.and(moneyVersion),
+  settings: settingsSchema.and(moneyVersion), 'monthly-summary': monthlySummarySchema.and(moneyVersion)
+}
