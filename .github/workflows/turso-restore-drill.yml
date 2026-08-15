@@ -1,0 +1,55 @@
+name: Turso disposable restore drill
+
+on:
+  workflow_dispatch:
+    inputs:
+      generation:
+        description: Verified R2 generation UUID
+        required: false
+        default: latest
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: turso-disposable-restore-drill
+  cancel-in-progress: false
+
+jobs:
+  restore-drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production-backup
+    env:
+      TURSO_API_TOKEN: ${{ secrets.TURSO_API_TOKEN }}
+      TURSO_ORG: ${{ secrets.TURSO_ORG }}
+      BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Install official Turso CLI
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/tursodatabase/turso/releases/download/v0.7.2/turso_cli-installer.sh | sh
+          echo "$HOME/.turso" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.turso:$HOME/.local/bin:$PATH"
+          turso --version
+      - name: Restore, verify, simulate cutover, and clean up disposable database
+        working-directory: backend
+        env:
+          RESTORE_GENERATION: ${{ inputs.generation }}
+        run: |
+          restore_name="mw-restore-$(date -u +%Y%m%d%H%M%S)-${GITHUB_RUN_ID}"
+          npm run backup:turso:restore -- --generation "$RESTORE_GENERATION" --database-name "$restore_name"

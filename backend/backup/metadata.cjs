@@ -30,10 +30,11 @@ function inspectDump(dump) {
     const representative = {
       users: database.prepare('SELECT id FROM users ORDER BY id LIMIT 1').get() ?? null,
       sessions: database.prepare('SELECT id, user_id FROM sessions ORDER BY id LIMIT 1').get() ?? null,
-      financeRecords: database.prepare('SELECT sync_id, user_id, revision FROM finance_records ORDER BY revision DESC LIMIT 1').get() ?? null,
-      syncRequests: database.prepare('SELECT user_id, request_id FROM sync_requests ORDER BY created_at DESC LIMIT 1').get() ?? null
+      financeRecords: database.prepare('SELECT sync_id, user_id, entity_type, record_id, payload_json, deleted_at, version, revision FROM finance_records ORDER BY revision DESC LIMIT 1').get() ?? null,
+      syncRequests: database.prepare('SELECT user_id, request_id, response_json FROM sync_requests ORDER BY created_at DESC LIMIT 1').get() ?? null
     }
-    return { schemaVersion: Math.max(...migrations.map((item) => item.version)), migrations, tableCounts, maximumRevision, foreignKeyViolations: 0, invalidIdempotency: 0, invalidPayloads: 0, duplicateRevisions: 0, representative }
+    const tombstoneCount = Number(database.prepare('SELECT COUNT(*) AS count FROM finance_records WHERE deleted_at IS NOT NULL').get().count)
+    return { schemaVersion: Math.max(...migrations.map((item) => item.version)), migrations, tableCounts, maximumRevision, tombstoneCount, foreignKeyViolations: 0, invalidIdempotency: 0, invalidPayloads: 0, duplicateRevisions: 0, representative }
   } finally {
     database?.close()
     fs.rmSync(directory, { recursive: true, force: true })
