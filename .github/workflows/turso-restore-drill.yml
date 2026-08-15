@@ -41,9 +41,13 @@ jobs:
         run: npm ci
       - name: Install official Turso CLI
         run: |
-          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/tursodatabase/turso/releases/download/v0.7.2/turso_cli-installer.sh | sh
-          source "$HOME/.turso/env"
-          dirname "$(command -v turso)" >> "$GITHUB_PATH"
+          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/tursodatabase/homebrew-tap/releases/download/v1.0.31/homebrew-tap_Linux_x86_64.tar.gz -o "$RUNNER_TEMP/turso.tar.gz"
+          echo "a5bc9978b6245fb8aa523a3932b1343fc0250d4eb02f50c70e2ebe23e0987f78  $RUNNER_TEMP/turso.tar.gz" | sha256sum --check --strict
+          mkdir -p "$HOME/.turso"
+          tar -C "$HOME/.turso" -zxf "$RUNNER_TEMP/turso.tar.gz" turso
+          chmod 700 "$HOME/.turso/turso"
+          echo "$HOME/.turso" >> "$GITHUB_PATH"
+          export PATH="$HOME/.turso:$PATH"
           turso --version
       - name: Restore, verify, simulate cutover, and clean up disposable database
         working-directory: backend
