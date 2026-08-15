@@ -8,6 +8,11 @@ on:
         required: false
         default: latest
         type: string
+      cleanup_retained:
+        description: Previously retained disposable mw-restore database to delete only after success
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -53,6 +58,11 @@ jobs:
         working-directory: backend
         env:
           RESTORE_GENERATION: ${{ inputs.generation }}
+          RETAINED_DATABASE: ${{ inputs.cleanup_retained }}
         run: |
           restore_name="mw-restore-$(date -u +%Y%m%d%H%M%S)-${GITHUB_RUN_ID}"
-          npm run backup:turso:restore -- --generation "$RESTORE_GENERATION" --database-name "$restore_name"
+          restore_args=(--generation "$RESTORE_GENERATION" --database-name "$restore_name")
+          if [[ -n "$RETAINED_DATABASE" ]]; then
+            restore_args+=(--cleanup-retained "$RETAINED_DATABASE")
+          fi
+          npm run backup:turso:restore -- "${restore_args[@]}"

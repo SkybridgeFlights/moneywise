@@ -33,6 +33,14 @@ function runTurso(args, token) {
 }
 function rows(result) { return Array.from(result.rows, (row) => ({ ...row })) }
 async function scalar(client, sql, args = []) { return Number(rows(await client.execute({ sql, args }))[0].value) }
+async function createDatabaseToken(organization, databaseName, platformToken) {
+  const url = `https://api.turso.tech/v1/organizations/${encodeURIComponent(organization)}/databases/${encodeURIComponent(databaseName)}/auth/tokens?expiration=1h&authorization=full-access`
+  const response = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${platformToken}`, 'content-type': 'application/json' }, body: '{}' })
+  if (!response.ok) throw new Error(`Turso database-token API failed with HTTP ${response.status}.`)
+  const result = await response.json()
+  if (typeof result.jwt !== 'string' || result.jwt.length < 20) throw new Error('Turso database-token API returned an invalid response.')
+  return result.jwt
+}
 
 async function verifyRestoredStructure(client, expected) {
   const tables = rows(await client.execute("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")).map((row) => row.name)
@@ -106,7 +114,9 @@ async function verifyBackendBehavior(database) {
 async function main() {
   let generationId = argument('--generation')
   const newDatabaseName = argument('--database-name')
+  const retainedDatabaseName = argument('--cleanup-retained')
   if (!generationId || !newDatabaseName || !/^mw-restore-[a-z0-9-]+$/.test(newDatabaseName)) throw new Error('Provide --generation and a disposable --database-name beginning with mw-restore-.')
+  if (retainedDatabaseName && (!/^mw-restore-[a-z0-9-]+$/.test(retainedDatabaseName) || retainedDatabaseName === newDatabaseName)) throw new Error('Retained cleanup target must be a different disposable mw-restore- database.')
   if (process.argv.includes('--cutover')) throw new Error('This tool never performs production cutover.')
   const platformToken = requiredEnvironment('TURSO_API_TOKEN')
   const organization = requiredEnvironment('TURSO_ORG')
@@ -131,7 +141,7 @@ async function main() {
     runTurso(['db', 'create', newDatabaseName, '--from-dump', dumpPath, '--wait'], platformToken)
     created = true
     const databaseUrl = runTurso(['db', 'show', newDatabaseName, '--url'], platformToken)
-    const databaseToken = runTurso(['db', 'tokens', 'create', newDatabaseName, '--expiration', '1h'], platformToken)
+    const databaseToken = await createDatabaseToken(organization, newDatabaseName, platformToken)
     assert.match(databaseUrl, /^libsql:\/\//)
     assert.ok(databaseToken.length > 20)
     const client = createClient({ url: databaseUrl, authToken: databaseToken })
@@ -142,6 +152,7 @@ async function main() {
     } finally { await database.close() }
     runTurso(['db', 'destroy', newDatabaseName, '--yes'], platformToken)
     created = false
+    if (retainedDatabaseName) runTurso(['db', 'destroy', retainedDatabaseName, '--yes'], platformToken)
     process.stdout.write(`RESTORE_DRILL generation=${generationId} database=${newDatabaseName} download=pass decrypt=pass plaintext_hash=pass import=pass schema=pass counts=pass foreign_keys=pass revisions=pass ownership=pass representative_data=pass backend_behavior=pass cutover_simulation=pass cleanup=pass production_modified=no\n`)
   } catch (error) {
     if (created) process.stderr.write(`Restore drill failed; disposable database ${newDatabaseName} retained for diagnosis.\n`)
