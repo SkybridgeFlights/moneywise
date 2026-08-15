@@ -10,6 +10,11 @@ const require = createRequire(import.meta.url)
 const root = path.resolve(import.meta.dirname, '..')
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const allowUnsigned = process.argv.includes('--allow-unsigned')
+const authorizedUnsignedPublicRelease = process.argv.includes('--authorized-unsigned-public-release')
+if (allowUnsigned && authorizedUnsignedPublicRelease) {
+  throw new Error('Choose either local unsigned validation or authorized unsigned public release validation, not both.')
+}
+const unsignedMode = allowUnsigned || authorizedUnsignedPublicRelease
 const checks = []
 const failures = []
 
@@ -55,7 +60,7 @@ check('builder configuration', () => {
 })
 
 check('production environment', () => {
-  if (allowUnsigned) return 'not required for unsigned packaging validation'
+  if (unsignedMode) return 'not required for unsigned artifact validation'
   if (required('NODE_ENV') !== 'production') throw new Error('NODE_ENV must equal production.')
   if (required('MONEYWISE_BACKEND_AUTH_MODE') !== 'password-only') throw new Error('MONEYWISE_BACKEND_AUTH_MODE must equal password-only.')
   if (required('AUTH_SECRET').length < 32) throw new Error('AUTH_SECRET must contain at least 32 characters.')
@@ -70,7 +75,7 @@ check('production environment', () => {
 })
 
 check('client environment consistency', () => {
-  if (allowUnsigned) return 'not required for unsigned packaging validation'
+  if (unsignedMode) return 'not required for unsigned artifact validation'
   if (required('MONEYWISE_SYNC_ENABLED') !== 'true' || required('EXPO_PUBLIC_MONEYWISE_SYNC_ENABLED') !== 'true') {
     throw new Error('Desktop and mobile synchronization must both be enabled for a production release.')
   }
@@ -84,7 +89,7 @@ check('client environment consistency', () => {
 })
 
 check('backend startup validation', () => {
-  if (allowUnsigned) return 'covered by backend integration tests'
+  if (unsignedMode) return 'covered by backend integration tests'
   const result = spawnSync(process.execPath, ['-e', "require('./config/env.cjs')"], { cwd: path.join(root, 'backend'), env: { ...process.env, NODE_ENV: 'production' }, encoding: 'utf8' })
   if (result.status !== 0) throw new Error((result.stderr || result.stdout).trim())
   return 'production environment accepted'
@@ -114,7 +119,7 @@ check('migrations and backup mechanism', () => {
   }
 })
 
-if (!allowUnsigned) {
+if (!unsignedMode) {
   check('production backup availability', () => {
     const { findLatestBackup, verifyBackup } = require('../backend/operations/backups.cjs')
     const directory = path.resolve(required('BACKUP_DIRECTORY'))
@@ -156,7 +161,8 @@ check('signing environment', () => {
   const link = process.env.CSC_LINK?.trim()
   const password = process.env.CSC_KEY_PASSWORD?.trim()
   if (Boolean(link) !== Boolean(password)) throw new Error('CSC_LINK and CSC_KEY_PASSWORD must be supplied together.')
-  if (!allowUnsigned && (!link || !password)) throw new Error('Signed production releases require CSC_LINK and CSC_KEY_PASSWORD.')
+  if (!unsignedMode && (!link || !password)) throw new Error('Signed production releases require CSC_LINK and CSC_KEY_PASSWORD.')
+  if (authorizedUnsignedPublicRelease && (link || password)) throw new Error('Authorized unsigned public release mode requires artifacts to be built without signing credentials.')
   if (link && !fs.existsSync(link) && !/^https:\/\//i.test(link) && !/^data:/i.test(link) && link.length < 512) {
     throw new Error('CSC_LINK is neither an existing file nor a supported protected URL/base64 certificate value.')
   }
@@ -165,7 +171,8 @@ check('signing environment', () => {
 
 check('Authenticode signatures', () => {
   if (process.platform !== 'win32') {
-    if (!allowUnsigned) throw new Error('Strict Authenticode validation must run on Windows.')
+    if (!unsignedMode) throw new Error('Strict Authenticode validation must run on Windows.')
+    if (authorizedUnsignedPublicRelease) throw new Error('Authorized unsigned public release validation must run on Windows.')
     return 'skipped on non-Windows unsigned validation'
   }
   const quoted = expectedArtifacts.map((filePath) => `'${filePath.replaceAll("'", "''")}'`).join(',')
@@ -173,8 +180,11 @@ check('Authenticode signatures', () => {
   const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', command], { encoding: 'utf8' })
   if (result.status !== 0) throw new Error(result.stderr.trim() || 'Authenticode inspection failed.')
   const statuses = result.stdout.trim().split(/\r?\n/).filter(Boolean)
-  if (!allowUnsigned && (statuses.length !== expectedArtifacts.length || statuses.some((status) => status !== 'Valid'))) {
+  if (!unsignedMode && (statuses.length !== expectedArtifacts.length || statuses.some((status) => status !== 'Valid'))) {
     throw new Error(`Every production artifact must have a Valid signature; found ${statuses.join(', ') || 'none'}.`)
+  }
+  if (authorizedUnsignedPublicRelease && (statuses.length !== expectedArtifacts.length || statuses.some((status) => status !== 'NotSigned'))) {
+    throw new Error(`Every authorized unsigned public artifact must report NotSigned; found ${statuses.join(', ') || 'none'}.`)
   }
   if (allowUnsigned && statuses.some((status) => !['Valid', 'NotSigned'].includes(status))) throw new Error(`Unexpected signature state: ${statuses.join(', ')}.`)
   return statuses
@@ -186,7 +196,12 @@ const settled = await Promise.all(checks.map(async (entry) => {
   }
   return entry
 }))
-const report = { generatedAt: new Date().toISOString(), mode: allowUnsigned ? 'unsigned-validation' : 'production', version: packageJson.version, passed: failures.length === 0, checks: settled }
+const mode = authorizedUnsignedPublicRelease
+  ? 'AUTHORIZED_UNSIGNED_PUBLIC_RELEASE'
+  : allowUnsigned
+    ? 'UNSIGNED_LOCAL_VALIDATION'
+    : 'SIGNED_RELEASE'
+const report = { generatedAt: new Date().toISOString(), mode, version: packageJson.version, passed: failures.length === 0, checks: settled }
 fs.mkdirSync(path.join(root, 'release'), { recursive: true })
 fs.writeFileSync(path.join(root, 'release', 'release-validation.json'), `${JSON.stringify(report, null, 2)}\n`)
 settled.forEach((entry) => console.log(`${entry.status === 'passed' ? 'PASS' : 'FAIL'} ${entry.name}${entry.detail ? `: ${JSON.stringify(entry.detail)}` : ''}`))

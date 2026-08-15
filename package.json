@@ -22,6 +22,7 @@
     "package:win": "npm.cmd run build && npm.cmd run rebuild:electron && electron-builder --win nsis portable",
     "release:verify": "node tools/verify-release.mjs",
     "release:verify:unsigned": "node tools/verify-release.mjs --allow-unsigned",
+    "release:verify:authorized-unsigned-public": "node tools/verify-release.mjs --authorized-unsigned-public-release",
     "release:win": "npm run package:win && npm run release:verify",
     "package:mac": "npm.cmd run build && npm.cmd run rebuild:electron && electron-builder --mac dmg"
   },
