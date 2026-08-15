@@ -128,10 +128,10 @@ async function main() {
   let created = false
   try {
     fs.writeFileSync(dumpPath, dump, { flag: 'wx', mode: 0o600 })
-    runTurso(['db', 'create', newDatabaseName, '--org', organization, '--from-dump', dumpPath, '--wait'], platformToken)
+    runTurso(['db', 'create', newDatabaseName, '--from-dump', dumpPath, '--wait'], platformToken)
     created = true
-    const databaseUrl = runTurso(['db', 'show', newDatabaseName, '--org', organization, '--url'], platformToken)
-    const databaseToken = runTurso(['db', 'tokens', 'create', newDatabaseName, '--org', organization, '--expiration', '1h'], platformToken)
+    const databaseUrl = runTurso(['db', 'show', newDatabaseName, '--url'], platformToken)
+    const databaseToken = runTurso(['db', 'tokens', 'create', newDatabaseName, '--expiration', '1h'], platformToken)
     assert.match(databaseUrl, /^libsql:\/\//)
     assert.ok(databaseToken.length > 20)
     const client = createClient({ url: databaseUrl, authToken: databaseToken })
@@ -140,7 +140,7 @@ async function main() {
       await verifyRestoredStructure(client, expected)
       await verifyBackendBehavior(database)
     } finally { await database.close() }
-    runTurso(['db', 'destroy', newDatabaseName, '--org', organization, '--yes'], platformToken)
+    runTurso(['db', 'destroy', newDatabaseName, '--yes'], platformToken)
     created = false
     process.stdout.write(`RESTORE_DRILL generation=${generationId} database=${newDatabaseName} download=pass decrypt=pass plaintext_hash=pass import=pass schema=pass counts=pass foreign_keys=pass revisions=pass ownership=pass representative_data=pass backend_behavior=pass cutover_simulation=pass cleanup=pass production_modified=no\n`)
   } catch (error) {
