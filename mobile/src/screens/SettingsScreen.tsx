@@ -1,5 +1,9 @@
 import React, { useState } from 'react'
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { Alert, StyleSheet, Text, View } from 'react-native'
+import { FormScreen } from '../components/FormScreen'
+import { Button, Chip } from '../components/ui'
+import { describeAuthError, describeSyncError } from '../services/userMessages'
+import { palette, spacing } from '../theme/tokens'
 import { NoticeCard } from '../components/NoticeCard'
 import { LabeledInput } from '../components/LabeledInput'
 import type { Settings, SyncState } from '../models/types'
@@ -12,7 +16,6 @@ interface SettingsScreenProps {
   backendUrl: string | null
   syncState: SyncState
   syncPhase: SyncPhase
-  syncMessage: string
   pendingChanges: number
   onSyncNow: () => void
   onTogglePaused: (paused: boolean) => void
@@ -42,7 +45,6 @@ export function SettingsScreen({
   backendUrl,
   syncState,
   syncPhase,
-  syncMessage,
   pendingChanges,
   onSyncNow,
   onTogglePaused,
@@ -57,6 +59,10 @@ export function SettingsScreen({
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [authError, setAuthError] = useState<string | null>(null)
+  // syncState.lastError / authError keep raw diagnostics; only the mapped copy
+  // is ever rendered, so status codes and backend wording stay internal.
+  const syncErrorMessage = describeSyncError(syncState.lastError)
+  const authMessage = describeAuthError(authError)
 
   async function submitAuth(mode: 'login' | 'register'): Promise<void> {
     setAuthError(null)
@@ -68,6 +74,7 @@ export function SettingsScreen({
     }
   }
 
+  const canSubmitAuth = Boolean(email.trim()) && password.length >= 8
   const languageOptions: Array<{ label: string; value: Settings['language']; locale: string; rtl: boolean }> = [
     { label: 'English', value: 'en', locale: 'en-US', rtl: false },
     { label: 'Arabic', value: 'ar', locale: 'ar', rtl: true }
@@ -75,12 +82,12 @@ export function SettingsScreen({
   const currencyOptions = ['USD', 'EUR', 'GBP', 'SAR', 'AED', 'EGP', 'JOD']
 
   return (
-    <ScrollView contentContainerStyle={styles.content}>
+    <FormScreen>
       <NoticeCard
         title={syncEnabled ? 'Sync status' : 'Local-first mode'}
         description={
           syncEnabled
-            ? `${syncMessage}. Last sync: ${formatDateTime(syncState.lastSyncAt)}. Pending local changes: ${pendingChanges}.`
+            ? `Last sync ${formatDateTime(syncState.lastSyncAt)}. ${pendingChanges} change${pendingChanges === 1 ? '' : 's'} waiting to upload.`
             : 'Sync is disabled. The app continues to work fully from local storage on this device.'
         }
         tone={syncTone}
@@ -97,34 +104,51 @@ export function SettingsScreen({
           <MetricLine label="Account" value={syncState.accountEmail ?? 'Not signed in'} />
           <MetricLine label="Auth mode" value={syncState.authMode === 'password' ? 'Email + password' : syncState.authMode === 'dev-session' ? 'Developer session' : 'Not available'} />
         </View>
-        {syncState.lastError ? <NoticeCard title="Last sync error" description={syncState.lastError} tone="error" /> : null}
+        {syncErrorMessage ? (
+          <NoticeCard
+            title={syncErrorMessage.title}
+            description={syncErrorMessage.description}
+            tone={syncErrorMessage.tone === 'negative' ? 'error' : syncErrorMessage.tone === 'warning' ? 'warning' : 'neutral'}
+            actionLabel={syncErrorMessage.retryable ? 'Try again' : undefined}
+            onAction={syncErrorMessage.retryable ? onSyncNow : undefined}
+          />
+        ) : null}
         {syncEnabled && !syncState.userId ? (
           <View style={styles.authForm}>
             <LabeledInput label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoComplete="email" />
-            <LabeledInput label="Password" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoComplete="current-password" />
-            {authError ? <NoticeCard title="Authentication failed" description={authError} tone="error" /> : null}
+            <LabeledInput
+              label="Password"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              autoComplete="current-password"
+              hint="At least 8 characters."
+            />
+            {authMessage ? <NoticeCard title={authMessage.title} description={authMessage.description} tone={authMessage.tone === 'warning' ? 'warning' : 'error'} /> : null}
             <View style={styles.actions}>
-              <Pressable accessibilityRole="button" onPress={() => void submitAuth('login')} style={styles.primaryButton} disabled={!email.trim() || password.length < 8}>
-                <Text style={styles.primaryButtonText}>Sign in</Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" onPress={() => void submitAuth('register')} style={styles.secondaryButton} disabled={!email.trim() || password.length < 8}>
-                <Text style={styles.secondaryButtonText}>Create account</Text>
-              </Pressable>
+              <Button label="Sign in" onPress={() => void submitAuth('login')} disabled={!canSubmitAuth} style={styles.grow} />
+              <Button label="Create account" onPress={() => void submitAuth('register')} variant="secondary" disabled={!canSubmitAuth} style={styles.grow} />
             </View>
           </View>
         ) : null}
         <View style={styles.actions}>
-          <Pressable onPress={onSyncNow} style={[styles.primaryButton, (!syncEnabled || syncState.paused || syncPhase === 'syncing') && styles.buttonDisabled]} disabled={!syncEnabled || syncState.paused || syncPhase === 'syncing'}>
-            <Text style={styles.primaryButtonText}>{syncPhase === 'syncing' ? 'Syncing...' : 'Sync now'}</Text>
-          </Pressable>
-          <Pressable onPress={() => onTogglePaused(!syncState.paused)} style={styles.secondaryButton}>
-            <Text style={styles.secondaryButtonText}>{syncState.paused ? 'Resume sync' : 'Pause sync'}</Text>
-          </Pressable>
+          <Button
+            label={syncPhase === 'syncing' ? 'Syncing' : 'Sync now'}
+            onPress={onSyncNow}
+            busy={syncPhase === 'syncing'}
+            disabled={!syncEnabled || syncState.paused}
+            style={styles.grow}
+          />
+          <Button
+            label={syncState.paused ? 'Resume sync' : 'Pause sync'}
+            onPress={() => onTogglePaused(!syncState.paused)}
+            variant="secondary"
+            style={styles.grow}
+          />
         </View>
         {syncState.userId ? (
-          <Pressable accessibilityRole="button" onPress={() => void onLogout()} style={styles.secondaryButton}>
-            <Text style={styles.secondaryButtonText}>Sign out / switch account</Text>
-          </Pressable>
+          <Button label="Sign out / switch account" onPress={() => void onLogout()} variant="secondary" />
         ) : null}
       </View>
 
@@ -134,25 +158,18 @@ export function SettingsScreen({
         <Text style={styles.sectionLabel}>Language</Text>
         <View style={styles.chips}>
           {languageOptions.map((option) => (
-            <Pressable
+            <Chip
               key={option.value}
+              label={option.label}
+              selected={settings.language === option.value}
               onPress={() => onUpdateSettings({ language: option.value, locale: option.locale, rtl: option.rtl })}
-              style={[styles.chip, settings.language === option.value ? styles.chipActive : null]}
-            >
-              <Text style={[styles.chipText, settings.language === option.value ? styles.chipTextActive : null]}>{option.label}</Text>
-            </Pressable>
+            />
           ))}
         </View>
         <Text style={styles.sectionLabel}>Currency</Text>
         <View style={styles.chips}>
           {currencyOptions.map((currency) => (
-            <Pressable
-              key={currency}
-              onPress={() => onUpdateSettings({ currency })}
-              style={[styles.chip, settings.currency === currency ? styles.chipActive : null]}
-            >
-              <Text style={[styles.chipText, settings.currency === currency ? styles.chipTextActive : null]}>{currency}</Text>
-            </Pressable>
+            <Chip key={currency} label={currency} selected={settings.currency === currency} onPress={() => onUpdateSettings({ currency })} />
           ))}
         </View>
       </View>
@@ -160,27 +177,25 @@ export function SettingsScreen({
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Planning</Text>
         <Text style={styles.cardSubtitle}>Open debt planning without crowding the main bottom navigation.</Text>
-        <Pressable onPress={onOpenDebts} style={styles.secondaryButton}>
-          <Text style={styles.secondaryButtonText}>Open debts</Text>
-        </Pressable>
+        <Button label="Open debts" onPress={onOpenDebts} variant="secondary" />
       </View>
 
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Safety</Text>
         <Text style={styles.cardSubtitle}>Destructive actions require confirmation.</Text>
-        <Pressable
+        <Button
+          label="Reset local device data"
+          variant="danger"
+          accessibilityHint="Opens a confirmation dialog"
           onPress={() =>
             Alert.alert('Reset local data?', 'This clears local finance and sync state on this device. Remote data is not deleted.', [
               { text: 'Cancel', style: 'cancel' },
               { text: 'Reset', style: 'destructive', onPress: onResetData }
             ])
           }
-          style={styles.dangerButton}
-        >
-          <Text style={styles.dangerButtonText}>Reset local device data</Text>
-        </Pressable>
+        />
       </View>
-    </ScrollView>
+    </FormScreen>
   )
 }
 
@@ -201,19 +216,19 @@ const styles = StyleSheet.create({
   },
   card: {
     borderRadius: 20,
-    backgroundColor: '#0f172a',
+    backgroundColor: palette.surface,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: palette.border,
     padding: 16,
     gap: 12
   },
   cardTitle: {
-    color: '#f8fafc',
+    color: palette.textPrimary,
     fontSize: 18,
     fontWeight: '700'
   },
   cardSubtitle: {
-    color: '#94a3b8',
+    color: palette.textSecondary,
     fontSize: 13,
     lineHeight: 18
   },
@@ -226,12 +241,12 @@ const styles = StyleSheet.create({
     gap: 12
   },
   metricLabel: {
-    color: '#94a3b8',
+    color: palette.textSecondary,
     fontSize: 13,
     flex: 1
   },
   metricValue: {
-    color: '#f8fafc',
+    color: palette.textPrimary,
     fontSize: 13,
     fontWeight: '600',
     flex: 1,
@@ -241,16 +256,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10
   },
-  authForm: { gap: 10 },
+  authForm: { gap: spacing.md },
+  grow: { flex: 1 },
   primaryButton: {
     flex: 1,
     borderRadius: 14,
     paddingVertical: 12,
     alignItems: 'center',
-    backgroundColor: '#0f766e'
+    backgroundColor: palette.positive
   },
   primaryButtonText: {
-    color: '#f8fafc',
+    color: palette.textPrimary,
     fontWeight: '700'
   },
   secondaryButton: {
@@ -258,17 +274,17 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 12,
     alignItems: 'center',
-    backgroundColor: '#334155'
+    backgroundColor: palette.surfaceRaised
   },
   secondaryButtonText: {
-    color: '#f8fafc',
+    color: palette.textPrimary,
     fontWeight: '700'
   },
   buttonDisabled: {
     opacity: 0.5
   },
   sectionLabel: {
-    color: '#cbd5e1',
+    color: palette.textSecondary,
     fontSize: 13,
     fontWeight: '600'
   },
@@ -281,27 +297,27 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: '#111827'
+    backgroundColor: palette.surfaceSunken
   },
   chipActive: {
-    backgroundColor: '#1d4ed8'
+    backgroundColor: palette.brand
   },
   chipText: {
-    color: '#cbd5e1',
+    color: palette.textSecondary,
     fontSize: 12,
     fontWeight: '600'
   },
   chipTextActive: {
-    color: '#eff6ff'
+    color: palette.textPrimary
   },
   dangerButton: {
     borderRadius: 14,
     paddingVertical: 12,
     alignItems: 'center',
-    backgroundColor: '#991b1b'
+    backgroundColor: palette.negative
   },
   dangerButtonText: {
-    color: '#fff1f2',
+    color: palette.textOnBrand,
     fontWeight: '700'
   }
 })

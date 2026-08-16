@@ -1,189 +1,314 @@
-import React from 'react'
-import { ScrollView, StyleSheet, Text, View } from 'react-native'
+import React, { useMemo } from 'react'
+import { StyleSheet, Text, View } from 'react-native'
 import { MetricCard } from '../components/MetricCard'
+import { Card, FadeIn, ProgressBar, Screen, SectionHeader, StateView, StatusPill } from '../components/ui'
 import type { DashboardAnalytics } from '../models/types'
-import { moneyDisplayNumber } from '../models/money'
+import { createMoneyFormatter } from '../theme/format'
+import { palette, radius, spacing, statusPalette, typography, type StatusTone } from '../theme/tokens'
 
 interface DashboardScreenProps {
   analytics: DashboardAnalytics
   currency: string
+  locale: string
+  /** True when the profile has no income, expenses, goals or debts at all. */
+  isEmpty: boolean
+  onOpenExpenses: () => void
+  onOpenIncome: () => void
+  onOpenBudget: () => void
 }
 
-function formatMoney(value: number, currency: string): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: 2
-  }).format(moneyDisplayNumber(value))
+const plannerTone: Record<DashboardAnalytics['smartPlanner']['status'], StatusTone> = {
+  comfortable: 'positive',
+  tight: 'warning',
+  risky: 'warning',
+  'not-enough': 'negative'
 }
 
-export function DashboardScreen({ analytics, currency }: DashboardScreenProps): React.JSX.Element {
-  const chartItems = [
-    { label: 'Income', value: analytics.totalIncome, color: '#22c55e' },
-    { label: 'Expenses', value: analytics.totalExpenses, color: '#ef4444' },
-    { label: 'Debt', value: analytics.monthlyDebtPayments, color: '#f97316' },
-    { label: 'Goals', value: analytics.remainingGoalAmount, color: '#06b6d4' }
-  ]
-  const chartMax = Math.max(...chartItems.map((item) => item.value), 1)
+const plannerCopy: Record<DashboardAnalytics['smartPlanner']['status'], string> = {
+  comfortable: 'On track',
+  tight: 'Tight',
+  risky: 'Watch spending',
+  'not-enough': 'Over budget'
+}
+
+export function DashboardScreen({
+  analytics,
+  currency,
+  locale,
+  isEmpty,
+  onOpenExpenses,
+  onOpenIncome,
+  onOpenBudget
+}: DashboardScreenProps): React.JSX.Element {
+  const formatMoney = useMemo(() => createMoneyFormatter(currency, locale), [currency, locale])
+  const planner = analytics.smartPlanner
+
+  // Month label from the analytics month id, not a second date calculation.
+  const monthLabel = useMemo(() => {
+    const [year, month] = analytics.currentMonth.split('-').map(Number)
+    if (!year || !month) return analytics.currentMonth
+    return new Date(year, month - 1, 1).toLocaleDateString(locale, { month: 'long', year: 'numeric' })
+  }, [analytics.currentMonth, locale])
+
+  const flowItems = useMemo(
+    () => [
+      { label: 'Income', value: analytics.totalIncome, tone: 'positive' as StatusTone },
+      { label: 'Expenses', value: analytics.totalExpenses, tone: 'negative' as StatusTone },
+      { label: 'Debt paid', value: analytics.monthlyDebtPayments, tone: 'warning' as StatusTone },
+      { label: 'Goals remaining', value: analytics.remainingGoalAmount, tone: 'brand' as StatusTone }
+    ],
+    [analytics.monthlyDebtPayments, analytics.remainingGoalAmount, analytics.totalExpenses, analytics.totalIncome]
+  )
+  const flowMax = useMemo(() => Math.max(...flowItems.map((item) => item.value), 0), [flowItems])
+  const spentRatio = analytics.totalIncome > 0 ? analytics.totalExpenses / analytics.totalIncome : 0
+
+  if (isEmpty) {
+    return (
+      <Screen>
+        <FadeIn>
+          <StateView
+            kind="empty"
+            title="Start with this month"
+            description="Add your income and expenses and MoneyWise will work out what is safe to spend each day and week."
+            actionLabel="Add income"
+            onAction={onOpenIncome}
+          />
+        </FadeIn>
+      </Screen>
+    )
+  }
 
   return (
-    <ScrollView contentContainerStyle={styles.content}>
-      <View style={styles.heroCard}>
-        <Text style={styles.heroEyebrow}>This month</Text>
-        <Text style={styles.heroValue}>{formatMoney(analytics.remainingBalance, currency)}</Text>
-        <Text style={styles.heroSubtitle}>
-          {analytics.remainingDaysInMonth} days left. Safe daily spending: {formatMoney(analytics.safeDailySpending, currency)}
-        </Text>
-      </View>
+    <Screen>
+      <FadeIn>
+        <Card style={styles.hero}>
+          <View style={styles.heroTop}>
+            <Text style={styles.heroEyebrow}>{monthLabel.toUpperCase()}</Text>
+            <StatusPill tone={plannerTone[planner.status]} label={plannerCopy[planner.status]} />
+          </View>
 
-      <View style={styles.metricGrid}>
-        <MetricCard label="Balance" value={formatMoney(analytics.remainingBalance, currency)} accent="#38bdf8" />
-        <MetricCard label="Expenses" value={formatMoney(analytics.totalExpenses, currency)} accent="#ef4444" />
-        <MetricCard label="Income" value={formatMoney(analytics.totalIncome, currency)} accent="#22c55e" />
-      </View>
+          <Text style={styles.heroLabel}>Usable balance</Text>
+          <Text style={styles.heroValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+            {formatMoney(planner.remainingUsableBalance)}
+          </Text>
+          <Text style={styles.heroCaption}>
+            After fixed bills, debt instalments and planned goal contributions
+          </Text>
 
-      <View style={styles.metricGrid}>
-        <MetricCard label="After fixed" value={formatMoney(analytics.remainingAfterFixedExpenses, currency)} accent="#8b5cf6" />
-        <MetricCard label="Daily safe" value={formatMoney(analytics.safeDailySpending, currency)} accent="#0f766e" />
-      </View>
-
-      <View style={styles.chartCard}>
-        <Text style={styles.sectionTitle}>Monthly flow</Text>
-        <Text style={styles.sectionSubtitle}>A quick visual view of what is driving the month right now.</Text>
-        <View style={styles.chartList}>
-          {chartItems.map((item) => (
-            <View key={item.label} style={styles.chartRow}>
-              <Text style={styles.chartLabel}>{item.label}</Text>
-              <View style={styles.chartTrack}>
-                <View style={[styles.chartBar, { width: `${Math.max((item.value / chartMax) * 100, 6)}%`, backgroundColor: item.color }]} />
-              </View>
-              <Text style={styles.chartValue}>{formatMoney(item.value, currency)}</Text>
+          <View style={styles.heroSplit}>
+            <View style={styles.heroSplitItem}>
+              <Text style={styles.heroSplitLabel}>Safe daily</Text>
+              <Text style={styles.heroSplitValue}>{formatMoney(planner.safeDailySpending)}</Text>
             </View>
-          ))}
-        </View>
+            <View style={styles.heroDivider} />
+            <View style={styles.heroSplitItem}>
+              <Text style={styles.heroSplitLabel}>Safe weekly</Text>
+              <Text style={styles.heroSplitValue}>{formatMoney(planner.safeWeeklySpending)}</Text>
+            </View>
+            <View style={styles.heroDivider} />
+            <View style={styles.heroSplitItem}>
+              <Text style={styles.heroSplitLabel}>Days left</Text>
+              <Text style={styles.heroSplitValue}>{analytics.remainingDaysInMonth}</Text>
+            </View>
+          </View>
+        </Card>
+      </FadeIn>
+
+      <View style={styles.metricRow}>
+        <MetricCard label="Income" value={formatMoney(analytics.totalIncome)} tone="positive" onPress={onOpenIncome} />
+        <MetricCard label="Expenses" value={formatMoney(analytics.totalExpenses)} tone="negative" onPress={onOpenExpenses} />
       </View>
 
-      <View style={styles.panel}>
-        <Text style={styles.sectionTitle}>Planning</Text>
-        <View style={styles.metricLine}>
-          <Text style={styles.metricLabel}>Fixed expenses</Text>
-          <Text style={styles.metricValue}>{formatMoney(analytics.fixedMonthlyExpenses, currency)}</Text>
+      <Card>
+        <SectionHeader title="Budget status" subtitle={`${monthLabel} so far`} />
+        <ProgressBar
+          ratio={spentRatio}
+          tone={spentRatio > 1 ? 'negative' : spentRatio > 0.85 ? 'warning' : 'positive'}
+          label={`Spent ${Math.round(spentRatio * 100)} percent of income`}
+        />
+        <View style={styles.legendRow}>
+          <Text style={styles.legendLabel}>
+            {analytics.totalIncome > 0 ? `${Math.round(spentRatio * 100)}% of income spent` : 'No income recorded yet'}
+          </Text>
+          <Text style={styles.legendValue}>{formatMoney(analytics.remainingBalance)} left</Text>
         </View>
-        <View style={styles.metricLine}>
-          <Text style={styles.metricLabel}>Variable expenses</Text>
-          <Text style={styles.metricValue}>{formatMoney(analytics.variableExpensesThisMonth, currency)}</Text>
+        <View style={styles.detailList}>
+          <DetailRow label="Fixed expenses" value={formatMoney(analytics.fixedMonthlyExpenses)} />
+          <DetailRow label="Variable expenses" value={formatMoney(analytics.variableExpensesThisMonth)} />
+          <DetailRow label="Still due this month" value={formatMoney(planner.fixedAndRecurringExpensesStillDueThisMonth)} />
         </View>
-        <View style={styles.metricLine}>
-          <Text style={styles.metricLabel}>Debt paid this month</Text>
-          <Text style={styles.metricValue}>{formatMoney(analytics.monthlyDebtPayments, currency)}</Text>
+      </Card>
+
+      <Card>
+        <SectionHeader title="Monthly flow" subtitle="What is driving the month right now" />
+        {flowMax === 0 ? (
+          <Text style={styles.flowEmpty}>Nothing recorded for this month yet.</Text>
+        ) : (
+          <View style={styles.flowList}>
+            {flowItems.map((item) => (
+              <View key={item.label} style={styles.flowRow}>
+                <View style={styles.flowHeader}>
+                  <Text style={styles.flowLabel}>{item.label}</Text>
+                  <Text style={styles.flowValue}>{formatMoney(item.value)}</Text>
+                </View>
+                <ProgressBar ratio={item.value / flowMax} tone={item.tone} label={`${item.label} ${formatMoney(item.value)}`} />
+              </View>
+            ))}
+          </View>
+        )}
+      </Card>
+
+      <Card>
+        <SectionHeader title="Commitments" subtitle="Debts and goals still to fund" />
+        <View style={styles.detailList}>
+          <DetailRow label="Debt balance" value={formatMoney(analytics.debtBalance)} />
+          <DetailRow label="Instalments due" value={formatMoney(planner.debtInstallmentsDueThisMonth)} />
+          <DetailRow label="Goals remaining" value={formatMoney(analytics.remainingGoalAmount)} />
+          <DetailRow
+            label="Planned goal contributions"
+            value={planner.goalsIncludedInPlanner ? formatMoney(planner.plannedGoalContributionsThisMonth) : 'Not in forecast'}
+          />
         </View>
-        <View style={styles.metricLine}>
-          <Text style={styles.metricLabel}>Weeks left</Text>
-          <Text style={styles.metricValue}>{analytics.remainingWeeksInMonth.toFixed(1)}</Text>
-        </View>
-      </View>
-    </ScrollView>
+      </Card>
+
+      <MetricCard
+        label="Budget planner"
+        value={formatMoney(planner.safeMonthlyFlexibleSpending)}
+        hint="Flexible spending left this month"
+        tone="brand"
+        onPress={onOpenBudget}
+      />
+    </Screen>
+  )
+}
+
+function DetailRow({ label, value }: { label: string; value: string }): React.JSX.Element {
+  return (
+    <View accessible accessibilityLabel={`${label}: ${value}`} style={styles.detailRow}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={styles.detailValue}>{value}</Text>
+    </View>
   )
 }
 
 const styles = StyleSheet.create({
-  content: {
-    paddingHorizontal: 18,
-    paddingBottom: 28,
-    gap: 16
+  hero: {
+    gap: spacing.xs,
+    borderColor: statusPalette.brand.border
   },
-  heroCard: {
-    borderRadius: 24,
-    backgroundColor: '#0f172a',
-    borderWidth: 1,
-    borderColor: '#1e3a5f',
-    padding: 20,
-    gap: 8
+  heroTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    marginBottom: spacing.xs
   },
   heroEyebrow: {
-    color: '#7dd3fc',
-    fontSize: 12,
-    fontWeight: '700',
-    textTransform: 'uppercase'
+    ...typography.eyebrow,
+    color: palette.brandText,
+    flexShrink: 1
+  },
+  heroLabel: {
+    ...typography.caption,
+    color: palette.textSecondary
   },
   heroValue: {
-    color: '#f8fafc',
-    fontSize: 32,
-    fontWeight: '800'
+    ...typography.display,
+    color: palette.textPrimary
   },
-  heroSubtitle: {
-    color: '#94a3b8',
-    fontSize: 14,
-    lineHeight: 20
+  heroCaption: {
+    ...typography.caption,
+    color: palette.textMuted,
+    lineHeight: 17
   },
-  metricGrid: {
+  heroSplit: {
     flexDirection: 'row',
-    gap: 12
+    alignItems: 'stretch',
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: palette.border
   },
-  chartCard: {
-    borderRadius: 22,
-    backgroundColor: '#0f172a',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    padding: 18,
-    gap: 14
+  heroSplitItem: {
+    flex: 1,
+    gap: spacing.xs
   },
-  sectionTitle: {
-    color: '#f8fafc',
-    fontSize: 18,
-    fontWeight: '700'
+  heroDivider: {
+    width: StyleSheet.hairlineWidth,
+    backgroundColor: palette.border,
+    marginHorizontal: spacing.md
   },
-  sectionSubtitle: {
-    color: '#94a3b8',
-    fontSize: 13,
-    lineHeight: 18
+  heroSplitLabel: {
+    ...typography.caption,
+    color: palette.textMuted
   },
-  chartList: {
-    gap: 10
+  heroSplitValue: {
+    ...typography.bodyStrong,
+    color: palette.textPrimary
   },
-  chartRow: {
-    gap: 8
+  metricRow: {
+    flexDirection: 'row',
+    gap: spacing.md
   },
-  chartLabel: {
-    color: '#cbd5e1',
-    fontSize: 13,
-    fontWeight: '600'
-  },
-  chartTrack: {
-    height: 10,
-    borderRadius: 999,
-    backgroundColor: '#0b1220',
-    overflow: 'hidden'
-  },
-  chartBar: {
-    height: '100%',
-    borderRadius: 999
-  },
-  chartValue: {
-    color: '#e2e8f0',
-    fontSize: 12,
-    fontWeight: '700'
-  },
-  panel: {
-    borderRadius: 22,
-    backgroundColor: '#0f172a',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    padding: 18,
-    gap: 12
-  },
-  metricLine: {
+  legendRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 12
+    alignItems: 'center',
+    gap: spacing.sm
   },
-  metricLabel: {
-    color: '#94a3b8',
-    fontSize: 14
+  legendLabel: {
+    ...typography.caption,
+    color: palette.textSecondary,
+    flex: 1
   },
-  metricValue: {
-    color: '#f8fafc',
-    fontSize: 14,
-    fontWeight: '700'
+  legendValue: {
+    ...typography.label,
+    color: palette.textPrimary
+  },
+  detailList: {
+    gap: spacing.sm,
+    marginTop: spacing.xs
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.md
+  },
+  detailLabel: {
+    ...typography.body,
+    color: palette.textSecondary,
+    flex: 1
+  },
+  detailValue: {
+    ...typography.bodyStrong,
+    color: palette.textPrimary
+  },
+  flowList: {
+    gap: spacing.md
+  },
+  flowRow: {
+    gap: spacing.sm
+  },
+  flowHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: spacing.sm
+  },
+  flowLabel: {
+    ...typography.label,
+    color: palette.textSecondary
+  },
+  flowValue: {
+    ...typography.label,
+    color: palette.textPrimary
+  },
+  flowEmpty: {
+    ...typography.body,
+    color: palette.textMuted
+  },
+  legendSpacer: {
+    height: radius.sm
   }
 })

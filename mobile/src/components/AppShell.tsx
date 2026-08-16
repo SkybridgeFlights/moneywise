@@ -1,20 +1,24 @@
 import React from 'react'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { TabIcon } from './TabIcon'
+import { PRIMARY_TABS, SECONDARY_TABS, resolveActivePrimaryTab, type AppTab, type AppTabId } from './navigationModel'
+import { palette, radius, sizing, spacing, statusPalette, typography } from '../theme/tokens'
 
-export interface AppTab {
-  id: 'dashboard' | 'expenses' | 'income' | 'budget' | 'goals' | 'debts' | 'settings'
-  label: string
-}
+// Re-exported so screens can import the navigation model from the shell.
+export { PRIMARY_TABS, SECONDARY_TABS, resolveActivePrimaryTab }
+export type { AppTab, AppTabId }
 
 interface AppShellProps {
   title: string
   subtitle: string
   tabs: AppTab[]
-  activeTab: AppTab['id']
-  onTabChange: (tab: AppTab['id']) => void
+  activeTab: AppTabId
+  onTabChange: (tab: AppTabId) => void
   onSync: () => void
   syncEnabled: boolean
   syncPhase: 'disabled' | 'idle' | 'syncing' | 'error'
+  syncLabel: string
   children: React.ReactNode
 }
 
@@ -27,43 +31,67 @@ export function AppShell({
   onSync,
   syncEnabled,
   syncPhase,
+  syncLabel,
   children
 }: AppShellProps): React.JSX.Element {
-  const syncLabel = syncPhase === 'syncing' ? 'Syncing' : syncPhase === 'error' ? 'Offline' : syncPhase === 'disabled' ? 'Local' : 'Synced'
+  const insets = useSafeAreaInsets()
+  const activePrimary = resolveActivePrimaryTab(activeTab)
+  const labelFor = (id: AppTabId): string => tabs.find((tab) => tab.id === id)?.label ?? id
+  const tone = syncPhase === 'error' ? 'negative' : syncPhase === 'syncing' ? 'warning' : syncEnabled ? 'positive' : 'neutral'
+  const statusColors = statusPalette[tone]
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerText}>
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.subtitle}>{subtitle}</Text>
+          <Text accessibilityRole="header" style={styles.title} numberOfLines={1}>
+            {title}
+          </Text>
+          <Text style={styles.subtitle} numberOfLines={1}>
+            {subtitle}
+          </Text>
         </View>
-        <View style={styles.headerActions}>
-          <View style={styles.syncBadge}>
-            <View style={[styles.syncDot, syncPhase === 'error' ? styles.syncDotError : syncPhase === 'syncing' ? styles.syncDotBusy : syncEnabled ? styles.syncDotReady : styles.syncDotDisabled]} />
-            <Text style={styles.syncBadgeText}>{syncLabel}</Text>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={onSync}
-            style={[styles.syncButton, syncEnabled ? styles.syncButtonEnabled : styles.syncButtonDisabled]}
-            disabled={!syncEnabled || syncPhase === 'syncing'}
-          >
-            <Text style={styles.syncButtonText}>Sync</Text>
-          </Pressable>
-        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Sync now. Status: ${syncLabel}`}
+          accessibilityState={{ disabled: !syncEnabled || syncPhase === 'syncing', busy: syncPhase === 'syncing' }}
+          onPress={onSync}
+          disabled={!syncEnabled || syncPhase === 'syncing'}
+          style={({ pressed }) => [
+            styles.syncControl,
+            { borderColor: statusColors.border, backgroundColor: statusColors.bg },
+            pressed ? styles.pressed : null,
+            !syncEnabled ? styles.syncControlDisabled : null
+          ]}
+        >
+          <View style={[styles.syncDot, { backgroundColor: statusColors.fg }]} />
+          <Text style={[styles.syncLabel, { color: statusColors.fg }]}>{syncLabel}</Text>
+        </Pressable>
       </View>
+
       <View style={styles.body}>{children}</View>
-      <View style={styles.bottomBar}>
-        {tabs.map((tab) => (
-          <Pressable
-            accessibilityRole="button"
-            key={tab.id}
-            onPress={() => onTabChange(tab.id)}
-            style={[styles.bottomTab, tab.id === activeTab ? styles.bottomTabActive : null]}
-          >
-            <Text style={[styles.bottomTabLabel, tab.id === activeTab ? styles.bottomTabLabelActive : null]}>{tab.label}</Text>
-          </Pressable>
-        ))}
+
+      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
+        {PRIMARY_TABS.map((tab) => {
+          const isActive = tab.id === activePrimary
+          const color = isActive ? palette.brand : palette.textMuted
+          return (
+            <Pressable
+              accessibilityRole="tab"
+              accessibilityLabel={labelFor(tab.id)}
+              accessibilityState={{ selected: isActive }}
+              key={tab.id}
+              onPress={() => onTabChange(tab.id)}
+              style={({ pressed }) => [styles.bottomTab, pressed ? styles.pressed : null]}
+            >
+              <TabIcon name={tab.icon} color={color} />
+              <Text style={[styles.bottomTabLabel, { color }]} numberOfLines={1}>
+                {labelFor(tab.id)}
+              </Text>
+              {isActive ? <View style={styles.activeIndicator} /> : null}
+            </Pressable>
+          )
+        })}
       </View>
     </View>
   )
@@ -74,112 +102,82 @@ const styles = StyleSheet.create({
     flex: 1
   },
   header: {
-    paddingHorizontal: 18,
-    paddingTop: 16,
-    paddingBottom: 12,
+    paddingHorizontal: sizing.screenPadding,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between'
+    justifyContent: 'space-between',
+    gap: spacing.md
   },
   headerText: {
-    flex: 1,
-    paddingRight: 12
+    flex: 1
   },
   title: {
-    color: '#f8fafc',
-    fontSize: 25,
-    fontWeight: '800'
+    ...typography.title,
+    color: palette.textPrimary
   },
   subtitle: {
-    color: '#94a3b8',
-    marginTop: 4,
-    fontSize: 13
+    ...typography.caption,
+    color: palette.textSecondary,
+    marginTop: 2
   },
-  headerActions: {
+  syncControl: {
+    minHeight: sizing.minTouchTarget,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10
-  },
-  syncBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: 999,
-    backgroundColor: '#0c1527',
+    gap: spacing.sm,
+    borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: '#22314b',
-    paddingHorizontal: 10,
-    paddingVertical: 7
+    paddingHorizontal: spacing.md
+  },
+  syncControlDisabled: {
+    opacity: 0.6
   },
   syncDot: {
     width: 8,
     height: 8,
-    borderRadius: 99
+    borderRadius: radius.pill
   },
-  syncDotReady: {
-    backgroundColor: '#22c55e'
-  },
-  syncDotBusy: {
-    backgroundColor: '#f59e0b'
-  },
-  syncDotError: {
-    backgroundColor: '#ef4444'
-  },
-  syncDotDisabled: {
-    backgroundColor: '#64748b'
-  },
-  syncBadgeText: {
-    color: '#cbd5e1',
-    fontSize: 12,
+  syncLabel: {
+    ...typography.caption,
     fontWeight: '700'
   },
-  syncButton: {
-    borderRadius: 999,
-    minWidth: 52,
-    height: 38,
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  syncButtonEnabled: {
-    backgroundColor: '#0f766e'
-  },
-  syncButtonDisabled: {
-    backgroundColor: '#1e293b'
-  },
-  syncButtonText: {
-    color: '#f8fafc',
-    fontWeight: '800',
-    fontSize: 12
+  pressed: {
+    opacity: 0.7
   },
   body: {
     flex: 1
   },
   bottomBar: {
     flexDirection: 'row',
-    borderTopWidth: 1,
-    borderTopColor: '#1d2b42',
-    backgroundColor: '#09111f',
-    paddingBottom: 18,
-    paddingTop: 10,
-    paddingHorizontal: 8,
-    gap: 6
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: palette.border,
+    backgroundColor: palette.surfaceSunken,
+    paddingTop: spacing.sm,
+    paddingHorizontal: spacing.sm
   },
   bottomTab: {
     flex: 1,
+    minHeight: sizing.minTouchTarget,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 16
-  },
-  bottomTabActive: {
-    backgroundColor: '#13233b'
+    gap: spacing.xs,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.md
   },
   bottomTabLabel: {
-    color: '#7b8aa0',
-    fontSize: 11,
-    fontWeight: '700'
+    ...typography.caption,
+    fontWeight: '600',
+    // Android clips descenders on tight line boxes without this.
+    lineHeight: Platform.OS === 'android' ? 15 : 14
   },
-  bottomTabLabelActive: {
-    color: '#f8fafc'
+  activeIndicator: {
+    position: 'absolute',
+    top: 0,
+    height: 3,
+    width: 26,
+    borderRadius: radius.pill,
+    backgroundColor: palette.brand
   }
 })

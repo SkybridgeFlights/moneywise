@@ -1,5 +1,9 @@
 import React, { useMemo, useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { FormScreen } from '../components/FormScreen'
+import { LabeledInput } from '../components/LabeledInput'
+import { Button, Chip } from '../components/ui'
+import { palette } from '../theme/tokens'
 import { MetricCard } from '../components/MetricCard'
 import { NoticeCard } from '../components/NoticeCard'
 import { buildBudgetPlanner, getPlannerPeriodInterval, type PlannerPeriodFilter } from '../models/budgetPlanner'
@@ -284,7 +288,7 @@ export function BudgetScreen({ state, onUpdateSettings }: BudgetScreenProps): Re
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.content}>
+    <FormScreen>
       <NoticeCard
         title={copy.title}
         description={planner.isPastPeriod ? copy.pastSubtitle : copy.subtitle}
@@ -295,20 +299,14 @@ export function BudgetScreen({ state, onUpdateSettings }: BudgetScreenProps): Re
         <Text style={styles.cardTitle}>{copy.selectedPeriod}</Text>
         <View style={styles.filterChips}>
           {periodOptions.map((option) => (
-            <Pressable
-              key={option.value}
-              onPress={() => setFilter(option.value)}
-              style={[styles.filterChip, filter === option.value ? styles.filterChipActive : null]}
-            >
-              <Text style={[styles.filterChipText, filter === option.value ? styles.filterChipTextActive : null]}>{option.label}</Text>
-            </Pressable>
+            <Chip key={option.value} label={option.label} selected={filter === option.value} onPress={() => setFilter(option.value)} />
           ))}
         </View>
         <View style={styles.metricGrid}>
-          <MetricCard label={copy.selectedPeriod} value={periodLabel} accent="#38bdf8" />
-          <MetricCard label={copy.totalIncomeAvailable} value={formatMoney(planner.totalIncomeAvailable, state.settings.currency, state.settings.locale)} accent="#22c55e" />
-          <MetricCard label={copy.plannerStatus} value={statusLabel} accent="#f59e0b" />
-          <MetricCard label={copy.remainingDays} value={String(planner.remainingDaysInPeriod)} accent="#8b5cf6" />
+          <MetricCard label={copy.selectedPeriod} value={periodLabel} tone="brand" />
+          <MetricCard label={copy.totalIncomeAvailable} value={formatMoney(planner.totalIncomeAvailable, state.settings.currency, state.settings.locale)} tone="positive" />
+          <MetricCard label={copy.plannerStatus} value={statusLabel} tone="warning" />
+          <MetricCard label={copy.remainingDays} value={String(planner.remainingDaysInPeriod)} tone="neutral" />
         </View>
         <Text style={styles.intervalText}>
           {interval.start.toISOString().slice(0, 10)} → {interval.end.toISOString().slice(0, 10)}
@@ -330,11 +328,9 @@ export function BudgetScreen({ state, onUpdateSettings }: BudgetScreenProps): Re
           label={balanceCopy.lastAdjustment}
           value={state.settings.balanceCorrection ? `${formatMoney(state.settings.balanceCorrection.difference, state.settings.currency, state.settings.locale)} - ${state.settings.balanceCorrection.updatedAt.slice(0, 10)}` : balanceCopy.noAdjustment}
         />
-        <TextInput style={styles.input} value={balanceInput} onChangeText={setBalanceInput} placeholder={balanceCopy.newBalance} placeholderTextColor="#64748b" keyboardType="numeric" />
-        <TextInput style={styles.input} value={balanceNote} onChangeText={setBalanceNote} placeholder={balanceCopy.adjustmentReason} placeholderTextColor="#64748b" />
-        <Pressable onPress={saveBalanceCorrection} style={[styles.actionButton, !balanceInput.trim() ? styles.actionButtonDisabled : null]} disabled={!balanceInput.trim()}>
-          <Text style={styles.actionButtonText}>{balanceCopy.save}</Text>
-        </Pressable>
+        <LabeledInput label={balanceCopy.newBalance} value={balanceInput} onChangeText={setBalanceInput} placeholder="0.00" keyboardType="money" />
+        <LabeledInput label={balanceCopy.adjustmentReason} value={balanceNote} onChangeText={setBalanceNote} placeholder="—" />
+        <Button label={balanceCopy.save} onPress={saveBalanceCorrection} disabled={!balanceInput.trim()} />
       </View>
 
       <View style={styles.card}>
@@ -383,7 +379,7 @@ export function BudgetScreen({ state, onUpdateSettings }: BudgetScreenProps): Re
         ))}
         <Text style={styles.cardSubtitle}>{copy.adviceOnly}</Text>
       </View>
-    </ScrollView>
+    </FormScreen>
   )
 }
 
@@ -395,19 +391,19 @@ const styles = StyleSheet.create({
   },
   card: {
     borderRadius: 20,
-    backgroundColor: '#0f172a',
+    backgroundColor: palette.surface,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: palette.border,
     padding: 16,
     gap: 12
   },
   cardTitle: {
-    color: '#f8fafc',
+    color: palette.textPrimary,
     fontSize: 18,
     fontWeight: '700'
   },
   cardSubtitle: {
-    color: '#94a3b8',
+    color: palette.textSecondary,
     fontSize: 13,
     lineHeight: 18
   },
@@ -420,18 +416,18 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: '#111827'
+    backgroundColor: palette.surfaceSunken
   },
   filterChipActive: {
-    backgroundColor: '#0f766e'
+    backgroundColor: palette.positive
   },
   filterChipText: {
-    color: '#cbd5e1',
+    color: palette.textSecondary,
     fontSize: 12,
     fontWeight: '700'
   },
   filterChipTextActive: {
-    color: '#ecfeff'
+    color: palette.textPrimary
   },
   metricGrid: {
     flexDirection: 'row',
@@ -439,7 +435,7 @@ const styles = StyleSheet.create({
     gap: 12
   },
   intervalText: {
-    color: '#64748b',
+    color: palette.textMuted,
     fontSize: 12
   },
   metricLine: {
@@ -454,12 +450,12 @@ const styles = StyleSheet.create({
     gap: 8
   },
   metricLabel: {
-    color: '#94a3b8',
+    color: palette.textSecondary,
     fontSize: 13,
     flex: 1
   },
   metricValue: {
-    color: '#f8fafc',
+    color: palette.textPrimary,
     fontSize: 13,
     fontWeight: '700',
     flex: 1,
@@ -471,15 +467,15 @@ const styles = StyleSheet.create({
     borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#1e293b'
+    backgroundColor: palette.border
   },
   helpButtonText: {
-    color: '#bae6fd',
+    color: palette.brandText,
     fontSize: 12,
     fontWeight: '800'
   },
   helpText: {
-    color: '#cbd5e1',
+    color: palette.textSecondary,
     fontSize: 12,
     lineHeight: 18,
     marginTop: 6
@@ -487,9 +483,9 @@ const styles = StyleSheet.create({
   input: {
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#243449',
-    backgroundColor: '#09111f',
-    color: '#f8fafc',
+    borderColor: palette.border,
+    backgroundColor: palette.surfaceSunken,
+    color: palette.textPrimary,
     paddingHorizontal: 12,
     paddingVertical: 11
   },
@@ -497,13 +493,13 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 13,
     alignItems: 'center',
-    backgroundColor: '#0f766e'
+    backgroundColor: palette.positive
   },
   actionButtonDisabled: {
     opacity: 0.45
   },
   actionButtonText: {
-    color: '#f8fafc',
+    color: palette.textPrimary,
     fontWeight: '800'
   }
 })

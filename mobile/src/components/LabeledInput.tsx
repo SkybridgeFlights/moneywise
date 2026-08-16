@@ -1,16 +1,24 @@
 import React from 'react'
-import { StyleSheet, Text, TextInput, View } from 'react-native'
+import { Platform, StyleSheet, Text, TextInput, View } from 'react-native'
+import { palette, radius, sizing, spacing, typography } from '../theme/tokens'
 
 interface LabeledInputProps {
   label: string
   value: string
   onChangeText: (value: string) => void
   placeholder?: string
-  keyboardType?: 'default' | 'numeric' | 'email-address'
+  /**
+   * `money` selects the decimal keypad and the input mode that shows a decimal
+   * separator, which the plain numeric keyboard omits on Android.
+   */
+  keyboardType?: 'default' | 'numeric' | 'money' | 'email-address'
   secureTextEntry?: boolean
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters'
   autoComplete?: 'email' | 'current-password' | 'new-password' | 'off'
   error?: string | null
+  hint?: string
+  onSubmitEditing?: () => void
+  returnKeyType?: 'done' | 'next' | 'go'
 }
 
 export function LabeledInput({
@@ -22,54 +30,100 @@ export function LabeledInput({
   secureTextEntry,
   autoCapitalize,
   autoComplete,
-  error
+  error,
+  hint,
+  onSubmitEditing,
+  returnKeyType
 }: LabeledInputProps): React.JSX.Element {
-  const errorId = `${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-error`
+  const [focused, setFocused] = React.useState(false)
+  const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+  const errorId = `${slug}-error`
+  const hintId = `${slug}-hint`
+  const isMoney = keyboardType === 'money'
+
   return (
     <View style={styles.container}>
-      <Text style={styles.label}>{label}</Text>
+      <Text nativeID={`${slug}-label`} style={styles.label}>
+        {label}
+      </Text>
       <TextInput
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor="#64748b"
-        keyboardType={keyboardType}
+        placeholderTextColor={palette.textMuted}
+        keyboardType={isMoney ? (Platform.OS === 'ios' ? 'decimal-pad' : 'numeric') : keyboardType}
+        inputMode={isMoney ? 'decimal' : undefined}
         secureTextEntry={secureTextEntry}
         autoCapitalize={autoCapitalize}
         autoComplete={autoComplete}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onSubmitEditing={onSubmitEditing}
+        returnKeyType={returnKeyType}
         accessibilityLabel={label}
-        accessibilityHint={error ?? undefined}
-        aria-describedby={error ? errorId : undefined}
-        style={[styles.input, error ? styles.inputError : null]}
+        accessibilityLabelledBy={`${slug}-label`}
+        aria-describedby={error ? errorId : hint ? hintId : undefined}
+        aria-invalid={Boolean(error)}
+        style={[styles.input, focused ? styles.inputFocused : null, error ? styles.inputError : null]}
       />
-      {error ? <Text nativeID={errorId} accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+      {error ? (
+        <View style={styles.messageRow}>
+          <Text style={styles.errorGlyph}>!</Text>
+          <Text nativeID={errorId} accessibilityRole="alert" style={styles.error}>
+            {error}
+          </Text>
+        </View>
+      ) : hint ? (
+        <Text nativeID={hintId} style={styles.hint}>
+          {hint}
+        </Text>
+      ) : null}
     </View>
   )
 }
 
 const styles = StyleSheet.create({
   container: {
-    gap: 6
+    gap: spacing.xs + 2
   },
   label: {
-    color: '#cbd5e1',
-    fontSize: 13,
-    fontWeight: '600'
+    ...typography.label,
+    color: palette.textSecondary
   },
   input: {
-    borderRadius: 14,
-    backgroundColor: '#09111f',
+    minHeight: sizing.inputHeight,
+    borderRadius: radius.md,
+    backgroundColor: palette.surfaceSunken,
     borderWidth: 1,
-    borderColor: '#1e293b',
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    color: '#f8fafc'
+    borderColor: palette.border,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    color: palette.textPrimary,
+    ...typography.body
+  },
+  inputFocused: {
+    borderColor: palette.brand
   },
   inputError: {
-    borderColor: '#dc2626'
+    borderColor: palette.negative
+  },
+  messageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs
+  },
+  errorGlyph: {
+    ...typography.caption,
+    fontWeight: '800',
+    color: palette.negative
   },
   error: {
-    color: '#fda4af',
-    fontSize: 12
+    ...typography.caption,
+    color: palette.negative,
+    flex: 1
+  },
+  hint: {
+    ...typography.caption,
+    color: palette.textMuted
   }
 })

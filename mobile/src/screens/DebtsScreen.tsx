@@ -1,7 +1,9 @@
 import React, { useMemo, useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, Text, View } from 'react-native'
+import { FormScreen } from '../components/FormScreen'
+import { Button, StateView } from '../components/ui'
+import { palette, statusPalette } from '../theme/tokens'
 import { LabeledInput } from '../components/LabeledInput'
-import { NoticeCard } from '../components/NoticeCard'
 import { RecordCard } from '../components/RecordCard'
 import type { DebtRecord, ExpenseRecord } from '../models/types'
 import { parseDecimalInput } from '../services/repository'
@@ -66,20 +68,16 @@ export function DebtsScreen({ records, expenses, currency, onSave, onDelete }: D
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.content}>
+    <FormScreen>
       <View style={styles.formCard}>
         <Text style={styles.heading}>{form.id ? 'Edit debt' : 'Add debt'}</Text>
         <LabeledInput label="Debt name" value={form.name} onChangeText={(value) => setForm((current) => ({ ...current, name: value }))} placeholder="Car loan" />
-        <LabeledInput label="Total debt amount" value={form.totalAmount} onChangeText={(value) => setForm((current) => ({ ...current, totalAmount: value }))} placeholder="5000" keyboardType="numeric" />
-        <LabeledInput label="Installment amount" value={form.installmentAmount} onChangeText={(value) => setForm((current) => ({ ...current, installmentAmount: value }))} placeholder="250" keyboardType="numeric" />
+        <LabeledInput label="Total debt amount" value={form.totalAmount} onChangeText={(value) => setForm((current) => ({ ...current, totalAmount: value }))} placeholder="5000" keyboardType="money" />
+        <LabeledInput label="Installment amount" value={form.installmentAmount} onChangeText={(value) => setForm((current) => ({ ...current, installmentAmount: value }))} placeholder="250" keyboardType="money" />
         <LabeledInput label="Start date" value={form.startDate} onChangeText={(value) => setForm((current) => ({ ...current, startDate: value }))} placeholder="YYYY-MM-DD" />
         <View style={styles.formActions}>
-          <Pressable onPress={handleSubmit} style={[styles.actionButton, styles.primaryAction]}>
-            <Text style={styles.actionText}>{form.id ? 'Update' : 'Save'}</Text>
-          </Pressable>
-          <Pressable onPress={resetForm} style={[styles.actionButton, styles.secondaryAction]}>
-            <Text style={styles.actionText}>Clear</Text>
-          </Pressable>
+          <Button label={form.id ? 'Update' : 'Save'} onPress={handleSubmit} style={styles.grow} />
+          <Button label="Clear" onPress={resetForm} variant="secondary" style={styles.grow} />
         </View>
       </View>
 
@@ -88,7 +86,9 @@ export function DebtsScreen({ records, expenses, currency, onSave, onDelete }: D
         <Text style={styles.summaryValue}>{formatMoney(totalRemaining, currency)}</Text>
       </View>
 
-      {records.length === 0 ? <NoticeCard title="No debts yet" description="Add a debt or installment plan to keep monthly obligations and payoff progress visible." /> : null}
+      {records.length === 0 ? (
+        <StateView kind="empty" title="No debts yet" description="Add a debt or installment plan to keep monthly obligations and payoff progress visible." />
+      ) : null}
 
       {records.map((record) => {
         const paid = expenses.filter((expense) => expense.debtId === record.id).reduce((sum, expense) => sum + expense.amount, 0)
@@ -112,7 +112,7 @@ export function DebtsScreen({ records, expenses, currency, onSave, onDelete }: D
           />
         )
       })}
-    </ScrollView>
+    </FormScreen>
   )
 }
 
@@ -124,16 +124,19 @@ const styles = StyleSheet.create({
   },
   formCard: {
     borderRadius: 20,
-    backgroundColor: '#0f172a',
+    backgroundColor: palette.surface,
     borderWidth: 1,
-    borderColor: '#1e293b',
+    borderColor: palette.border,
     padding: 16,
     gap: 12
   },
   heading: {
-    color: '#f8fafc',
+    color: palette.textPrimary,
     fontSize: 18,
     fontWeight: '700'
+  },
+  grow: {
+    flex: 1
   },
   formActions: {
     flexDirection: 'row',
@@ -146,27 +149,27 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   primaryAction: {
-    backgroundColor: '#1d4ed8'
+    backgroundColor: palette.brand
   },
   secondaryAction: {
-    backgroundColor: '#334155'
+    backgroundColor: palette.surfaceRaised
   },
   actionText: {
-    color: '#f8fafc',
+    color: palette.textPrimary,
     fontWeight: '700'
   },
   summary: {
     borderRadius: 18,
-    backgroundColor: '#3f0f1d',
+    backgroundColor: statusPalette.negative.bg,
     padding: 16,
     gap: 6
   },
   summaryLabel: {
-    color: '#fda4af',
+    color: palette.negative,
     fontSize: 13
   },
   summaryValue: {
-    color: '#fff1f2',
+    color: palette.textOnBrand,
     fontSize: 24,
     fontWeight: '700'
   }

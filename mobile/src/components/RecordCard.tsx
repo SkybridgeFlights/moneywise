@@ -1,32 +1,53 @@
 import React from 'react'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { confirmRecordDeletion } from '../services/destructiveActions'
+import { elevation, palette, radius, sizing, spacing, typography } from '../theme/tokens'
 
 interface RecordCardProps {
   title: string
   subtitle: string
   value: string
+  /** Optional trailing meta, e.g. a category or status word. */
+  meta?: string
   onEdit: () => void
   onDelete: () => void
 }
 
-export function RecordCard({ title, subtitle, value, onEdit, onDelete }: RecordCardProps): React.JSX.Element {
+export function RecordCard({ title, subtitle, value, meta, onEdit, onDelete }: RecordCardProps): React.JSX.Element {
   const confirmDelete = (): void => confirmRecordDeletion(title, onDelete)
   return (
-    <View style={styles.card} accessible accessibilityRole="summary" accessibilityLabel={`${title}, ${value}. ${subtitle}`}>
-      <View style={styles.header}>
+    <View style={styles.card}>
+      <View accessible accessibilityRole="summary" accessibilityLabel={`${title}, ${value}. ${subtitle}`} style={styles.header}>
         <View style={styles.copy}>
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.subtitle}>{subtitle}</Text>
+          <Text style={styles.title} numberOfLines={1}>
+            {title}
+          </Text>
+          <Text style={styles.subtitle} numberOfLines={2}>
+            {subtitle}
+          </Text>
+          {meta ? <Text style={styles.meta}>{meta}</Text> : null}
         </View>
-        <Text style={styles.value}>{value}</Text>
+        <Text style={styles.value} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+          {value}
+        </Text>
       </View>
       <View style={styles.actions}>
-        <Pressable onPress={onEdit} style={[styles.action, styles.editAction]} accessibilityRole="button" accessibilityLabel={`Edit ${title}`}>
-          <Text style={styles.actionLabel}>Edit</Text>
+        <Pressable
+          onPress={onEdit}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${title}`}
+          style={({ pressed }) => [styles.action, styles.editAction, pressed ? styles.pressed : null]}
+        >
+          <Text style={styles.editLabel}>Edit</Text>
         </Pressable>
-        <Pressable onPress={confirmDelete} style={[styles.action, styles.deleteAction]} accessibilityRole="button" accessibilityLabel={`Delete ${title}`} accessibilityHint="Opens a confirmation dialog">
-          <Text style={styles.actionLabel}>Delete</Text>
+        <Pressable
+          onPress={confirmDelete}
+          accessibilityRole="button"
+          accessibilityLabel={`Delete ${title}`}
+          accessibilityHint="Opens a confirmation dialog"
+          style={({ pressed }) => [styles.action, styles.deleteAction, pressed ? styles.pressed : null]}
+        >
+          <Text style={styles.deleteLabel}>Delete</Text>
         </Pressable>
       </View>
     </View>
@@ -35,59 +56,75 @@ export function RecordCard({ title, subtitle, value, onEdit, onDelete }: RecordC
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 20,
-    backgroundColor: '#0c1527',
+    borderRadius: radius.lg,
+    backgroundColor: palette.surface,
     borderWidth: 1,
-    borderColor: '#1c2940',
-    padding: 16,
-    gap: 12
+    borderColor: palette.border,
+    padding: spacing.lg,
+    gap: spacing.md,
+    ...elevation.card
   },
   header: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: 12
+    gap: spacing.md
   },
   copy: {
     flex: 1,
-    gap: 4
+    gap: spacing.xs
   },
   title: {
-    color: '#f8fafc',
-    fontWeight: '700',
-    fontSize: 16
+    ...typography.bodyStrong,
+    color: palette.textPrimary
   },
   subtitle: {
-    color: '#94a3b8',
-    fontSize: 13,
-    lineHeight: 18
+    ...typography.caption,
+    color: palette.textSecondary,
+    lineHeight: 17
+  },
+  meta: {
+    ...typography.caption,
+    color: palette.textMuted
   },
   value: {
-    color: '#7dd3fc',
-    fontSize: 18,
-    fontWeight: '800'
+    ...typography.metric,
+    color: palette.textPrimary,
+    flexShrink: 0,
+    maxWidth: '45%',
+    textAlign: 'right'
   },
   actions: {
     flexDirection: 'row',
-    gap: 10
+    gap: spacing.sm
   },
   action: {
-    borderRadius: 999,
-    minWidth: 68,
-    height: 36,
-    paddingHorizontal: 14,
+    flex: 1,
+    minHeight: sizing.minTouchTarget,
+    borderRadius: radius.md,
     alignItems: 'center',
-    justifyContent: 'center'
+    justifyContent: 'center',
+    borderWidth: 1
+  },
+  pressed: {
+    opacity: 0.7
   },
   editAction: {
-    backgroundColor: '#1d4ed8'
+    backgroundColor: palette.surfaceRaised,
+    borderColor: palette.border
   },
+  editLabel: {
+    ...typography.label,
+    color: palette.textPrimary
+  },
+  // Destructive action reads differently from the neutral one: outlined in the
+  // negative colour rather than another solid block.
   deleteAction: {
-    backgroundColor: '#991b1b'
+    backgroundColor: 'transparent',
+    borderColor: palette.negative
   },
-  actionLabel: {
-    color: '#f8fafc',
-    fontWeight: '700',
-    fontSize: 12
+  deleteLabel: {
+    ...typography.label,
+    color: palette.negative
   }
 })

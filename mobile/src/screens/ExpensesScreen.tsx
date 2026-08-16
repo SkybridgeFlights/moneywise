@@ -1,5 +1,8 @@
 import React, { useMemo, useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { FormScreen } from '../components/FormScreen'
+import { Button, StateView } from '../components/ui'
+import { palette } from '../theme/tokens'
 import { LabeledInput } from '../components/LabeledInput'
 import { NoticeCard } from '../components/NoticeCard'
 import { RecordCard } from '../components/RecordCard'
@@ -312,7 +315,7 @@ export function ExpensesScreen({ records, categories, debts, currency, locale, l
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.content}>
+    <FormScreen>
       <View style={styles.summaryCard}>
         <View style={styles.summaryHeader}>
           <View>
@@ -367,7 +370,7 @@ export function ExpensesScreen({ records, categories, debts, currency, locale, l
         <Text style={styles.sectionSubtitle}>{copy.localFirstSave}</Text>
         {formError ? <NoticeCard title={copy.addExpense} description={formError} tone="error" /> : null}
         <LabeledInput label={copy.title} value={form.title} onChangeText={(value) => setForm((current) => ({ ...current, title: value }))} placeholder={language === 'ar' ? 'بقالة' : 'Groceries'} />
-        <LabeledInput label={copy.amount} value={form.amount} onChangeText={(value) => setForm((current) => ({ ...current, amount: value }))} placeholder="42.75" keyboardType="numeric" />
+        <LabeledInput label={copy.amount} value={form.amount} onChangeText={(value) => setForm((current) => ({ ...current, amount: value }))} placeholder="42.75" keyboardType="money" />
         <LabeledInput label={copy.date} value={form.date} onChangeText={(value) => setForm((current) => ({ ...current, date: value }))} placeholder="YYYY-MM-DD" />
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>{copy.category}</Text>
@@ -415,17 +418,14 @@ export function ExpensesScreen({ records, categories, debts, currency, locale, l
           </View>
         </View>
         <View style={styles.formActions}>
-          <Pressable onPress={handleSubmit} style={[styles.actionButton, styles.primaryAction]}>
-            <Text style={styles.actionText}>{form.id ? copy.updateExpense : copy.saveExpense}</Text>
-          </Pressable>
-          <Pressable onPress={resetForm} style={[styles.actionButton, styles.secondaryAction]}>
-            <Text style={styles.actionText}>{copy.clear}</Text>
-          </Pressable>
+          <Button label={form.id ? copy.updateExpense : copy.saveExpense} onPress={handleSubmit} style={styles.grow} />
+          <Button label={copy.clear} onPress={resetForm} variant="secondary" style={styles.grow} />
         </View>
       </View>
 
       {filteredRecords.length === 0 ? (
-        <NoticeCard
+        <StateView
+          kind="empty"
           title={isFutureFilter ? copy.emptyFutureTitle : copy.emptyTitle}
           description={isFutureFilter ? copy.emptyFutureDescription : copy.emptyDescription(activeFilterLabel)}
         />
@@ -451,7 +451,7 @@ export function ExpensesScreen({ records, categories, debts, currency, locale, l
           onDelete={() => onDelete(record.id)}
         />
       ))}
-    </ScrollView>
+    </FormScreen>
   )
 }
 
@@ -463,9 +463,9 @@ const styles = StyleSheet.create({
   },
   summaryCard: {
     borderRadius: 22,
-    backgroundColor: '#0c1527',
+    backgroundColor: palette.surface,
     borderWidth: 1,
-    borderColor: '#1d2b42',
+    borderColor: palette.border,
     padding: 18,
     gap: 14
   },
@@ -476,25 +476,25 @@ const styles = StyleSheet.create({
     gap: 12
   },
   summaryEyebrow: {
-    color: '#7dd3fc',
+    color: palette.brandText,
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'uppercase'
   },
   summaryTitle: {
-    color: '#f8fafc',
+    color: palette.textPrimary,
     fontSize: 24,
     fontWeight: '800',
     marginTop: 4
   },
   summaryBadge: {
     borderRadius: 999,
-    backgroundColor: '#13233b',
+    backgroundColor: palette.surfaceRaised,
     paddingHorizontal: 12,
     paddingVertical: 8
   },
   summaryBadgeText: {
-    color: '#dbeafe',
+    color: palette.brandText,
     fontSize: 12,
     fontWeight: '700'
   },
@@ -507,45 +507,45 @@ const styles = StyleSheet.create({
     minWidth: '45%',
     flex: 1,
     borderRadius: 18,
-    backgroundColor: '#09111f',
+    backgroundColor: palette.surfaceSunken,
     borderWidth: 1,
-    borderColor: '#1c2940',
+    borderColor: palette.border,
     padding: 14,
     gap: 6
   },
   metricLabel: {
-    color: '#94a3b8',
+    color: palette.textSecondary,
     fontSize: 12,
     fontWeight: '600'
   },
   metricValue: {
-    color: '#f8fafc',
+    color: palette.textPrimary,
     fontSize: 18,
     fontWeight: '800'
   },
   filterCard: {
     borderRadius: 20,
-    backgroundColor: '#0c1527',
+    backgroundColor: palette.surface,
     borderWidth: 1,
-    borderColor: '#1d2b42',
+    borderColor: palette.border,
     padding: 16,
     gap: 12
   },
   formCard: {
     borderRadius: 20,
-    backgroundColor: '#0c1527',
+    backgroundColor: palette.surface,
     borderWidth: 1,
-    borderColor: '#1d2b42',
+    borderColor: palette.border,
     padding: 16,
     gap: 12
   },
   sectionTitle: {
-    color: '#f8fafc',
+    color: palette.textPrimary,
     fontSize: 18,
     fontWeight: '700'
   },
   sectionSubtitle: {
-    color: '#94a3b8',
+    color: palette.textSecondary,
     fontSize: 13,
     lineHeight: 18
   },
@@ -558,24 +558,24 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: '#111827'
+    backgroundColor: palette.surfaceSunken
   },
   filterChipActive: {
-    backgroundColor: '#0f766e'
+    backgroundColor: palette.positive
   },
   filterChipText: {
-    color: '#cbd5e1',
+    color: palette.textSecondary,
     fontSize: 12,
     fontWeight: '700'
   },
   filterChipTextActive: {
-    color: '#ecfeff'
+    color: palette.textPrimary
   },
   section: {
     gap: 8
   },
   sectionLabel: {
-    color: '#cbd5e1',
+    color: palette.textSecondary,
     fontSize: 13,
     fontWeight: '600'
   },
@@ -588,18 +588,21 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: '#111827'
+    backgroundColor: palette.surfaceSunken
   },
   chipActive: {
-    backgroundColor: '#1d4ed8'
+    backgroundColor: palette.brand
   },
   chipText: {
-    color: '#cbd5e1',
+    color: palette.textSecondary,
     fontSize: 12,
     fontWeight: '600'
   },
   chipTextActive: {
-    color: '#eff6ff'
+    color: palette.textPrimary
+  },
+  grow: {
+    flex: 1
   },
   formActions: {
     flexDirection: 'row',
@@ -613,13 +616,13 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   primaryAction: {
-    backgroundColor: '#0f766e'
+    backgroundColor: palette.positive
   },
   secondaryAction: {
-    backgroundColor: '#334155'
+    backgroundColor: palette.surfaceRaised
   },
   actionText: {
-    color: '#f8fafc',
+    color: palette.textPrimary,
     fontWeight: '700'
   }
 })

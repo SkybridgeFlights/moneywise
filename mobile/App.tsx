@@ -1,6 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native'
-import { AppShell, type AppTab } from './src/components/AppShell'
+import { StatusBar, StyleSheet, Text, View } from 'react-native'
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
+import { AppShell, PRIMARY_TABS, SECONDARY_TABS, type AppTab, type AppTabId } from './src/components/AppShell'
+import { Card, Skeleton } from './src/components/ui'
+import { MoreScreen } from './src/screens/MoreScreen'
+import { describeSyncError, describeSyncPhase } from './src/services/userMessages'
+import { palette, spacing } from './src/theme/tokens'
 import { BudgetScreen } from './src/screens/BudgetScreen'
 import { DashboardScreen } from './src/screens/DashboardScreen'
 import { DebtsScreen } from './src/screens/DebtsScreen'
@@ -32,7 +37,7 @@ export default function App(): React.JSX.Element {
   const syncConfig = useMemo(() => getMobileSyncConfig(), [])
   const [financeState, setFinanceState] = useState<FinanceState>(() => createDefaultFinanceState())
   const [syncState, setSyncState] = useState<SyncState>(() => createEmptySyncState())
-  const [activeTab, setActiveTab] = useState<AppTab['id']>('dashboard')
+  const [activeTab, setActiveTab] = useState<AppTabId>('dashboard')
   const [isReady, setIsReady] = useState(false)
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({
     phase: syncConfig.enabled ? 'idle' : 'disabled',
@@ -60,7 +65,8 @@ export default function App(): React.JSX.Element {
             { id: 'budget', label: 'الميزانية' },
             { id: 'goals', label: 'الأهداف' },
             { id: 'debts', label: 'الديون' },
-            { id: 'settings', label: 'الإعدادات' }
+            { id: 'settings', label: 'الإعدادات' },
+            { id: 'more', label: 'المزيد' }
           ]
         : [
             { id: 'dashboard', label: 'Dashboard' },
@@ -69,7 +75,8 @@ export default function App(): React.JSX.Element {
             { id: 'budget', label: 'Budget' },
             { id: 'goals', label: 'Goals' },
             { id: 'debts', label: 'Debts' },
-            { id: 'settings', label: 'Settings' }
+            { id: 'settings', label: 'Settings' },
+            { id: 'more', label: 'More' }
           ],
     [financeState.settings.language]
   )
@@ -314,31 +321,95 @@ export default function App(): React.JSX.Element {
     void resetMobileStorage(syncState.userId ?? undefined)
   }
 
+  // The header shows sanitised copy: syncStatus.message can carry backend text
+  // and HTTP codes, which stay in state for diagnostics but never reach the UI.
+  const headerSubtitle = !syncConfig.enabled
+    ? 'Local-first mode'
+    : syncStatus.phase === 'error'
+      ? (describeSyncError(syncStatus.message)?.title ?? 'Sync did not finish')
+      : syncStatus.phase === 'syncing'
+        ? 'Syncing your data'
+        : syncState.accountEmail ?? 'Signed out'
+
+  const syncBadgeLabel = describeSyncPhase(syncStatus.phase, syncState.paused)
+  const isProfileEmpty =
+    financeState.incomes.length === 0 &&
+    financeState.expenses.length === 0 &&
+    financeState.goals.length === 0 &&
+    financeState.debts.length === 0
+
   if (!isReady) {
     return (
-      <SafeAreaView style={styles.loadingContainer}>
-        <StatusBar barStyle="light-content" />
-        <Text style={styles.loadingTitle}>MoneyWise Mobile</Text>
-        <Text style={styles.loadingSubtitle}>Loading local data...</Text>
-      </SafeAreaView>
+      <SafeAreaProvider>
+        <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+          <StatusBar barStyle="light-content" />
+          <View style={styles.loadingHeader}>
+            <Skeleton height={26} width="58%" />
+            <Skeleton height={13} width="38%" />
+          </View>
+          <View style={styles.loadingBody}>
+            <Card>
+              <Skeleton height={12} width="32%" />
+              <Skeleton height={38} width="70%" />
+              <Skeleton height={12} width="86%" />
+            </Card>
+            <View style={styles.loadingRow}>
+              <Card style={styles.loadingCell}>
+                <Skeleton height={12} width="52%" />
+                <Skeleton height={22} width="76%" />
+              </Card>
+              <Card style={styles.loadingCell}>
+                <Skeleton height={12} width="52%" />
+                <Skeleton height={22} width="76%" />
+              </Card>
+            </View>
+            <Card>
+              <Skeleton height={14} width="44%" />
+              <Skeleton height={8} />
+              <Skeleton height={8} width="80%" />
+            </Card>
+          </View>
+          <Text accessibilityRole="progressbar" accessibilityLabel="Loading your MoneyWise data" style={styles.loadingCaption}>
+            Preparing your encrypted data…
+          </Text>
+        </SafeAreaView>
+      </SafeAreaProvider>
     )
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.container} edges={['top']}>
       <StatusBar barStyle="light-content" />
       <AppShell
-        title="MoneyWise Mobile"
-        subtitle={syncConfig.enabled ? syncStatus.message : 'Local-first mode'}
+        title="MoneyWise"
+        subtitle={headerSubtitle}
         tabs={tabs}
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onSync={() => void runSync('manual')}
         syncEnabled={syncConfig.enabled}
         syncPhase={syncStatus.phase}
+        syncLabel={syncBadgeLabel}
       >
         {activeTab === 'dashboard' ? (
-          <DashboardScreen analytics={analytics} currency={financeState.settings.currency} />
+          <DashboardScreen
+            analytics={analytics}
+            currency={financeState.settings.currency}
+            locale={financeState.settings.locale}
+            isEmpty={isProfileEmpty}
+            onOpenExpenses={() => setActiveTab('expenses')}
+            onOpenIncome={() => setActiveTab('income')}
+            onOpenBudget={() => setActiveTab('budget')}
+          />
+        ) : null}
+        {activeTab === 'more' ? (
+          <MoreScreen
+            onNavigate={setActiveTab}
+            accountEmail={syncState.accountEmail}
+            syncSummary={syncBadgeLabel}
+            pendingChanges={pendingChanges}
+          />
         ) : null}
         {activeTab === 'expenses' ? (
           <ExpensesScreen
@@ -356,6 +427,7 @@ export default function App(): React.JSX.Element {
           <IncomeScreen
             records={financeState.incomes}
             currency={financeState.settings.currency}
+            locale={financeState.settings.locale}
             onSave={handleSaveIncome}
             onDelete={(id) => handleDelete('income', id)}
           />
@@ -365,6 +437,7 @@ export default function App(): React.JSX.Element {
           <GoalsScreen
             records={financeState.goals}
             currency={financeState.settings.currency}
+            locale={financeState.settings.locale}
             onSave={handleSaveGoal}
             onDelete={(id) => handleDelete('goal', id)}
             onOpenDebts={() => setActiveTab('debts')}
@@ -386,7 +459,6 @@ export default function App(): React.JSX.Element {
             backendUrl={syncConfig.backendUrl}
             syncState={syncState}
             syncPhase={syncStatus.phase}
-            syncMessage={syncStatus.message}
             pendingChanges={pendingChanges}
             onSyncNow={() => void runSync('manual')}
             onTogglePaused={handleToggleSyncPaused}
@@ -399,48 +471,37 @@ export default function App(): React.JSX.Element {
           />
         ) : null}
       </AppShell>
-      <View style={styles.footer}>
-        <Text style={styles.footerText}>
-          {syncConfig.enabled
-            ? `${pendingChanges} pending change${pendingChanges === 1 ? '' : 's'}`
-            : 'Set EXPO_PUBLIC_MONEYWISE_SYNC_ENABLED=true to enable sync.'}
-        </Text>
-      </View>
-    </SafeAreaView>
+      </SafeAreaView>
+    </SafeAreaProvider>
   )
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#081122'
+    backgroundColor: palette.canvas
   },
-  loadingContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#081122',
-    paddingHorizontal: 24
+  loadingHeader: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.lg,
+    gap: spacing.sm
   },
-  loadingTitle: {
-    color: '#f8fafc',
-    fontSize: 28,
-    fontWeight: '700',
-    marginBottom: 8
+  loadingBody: {
+    paddingHorizontal: spacing.lg,
+    gap: spacing.md
   },
-  loadingSubtitle: {
-    color: '#94a3b8',
-    fontSize: 15
+  loadingRow: {
+    flexDirection: 'row',
+    gap: spacing.md
   },
-  footer: {
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-    paddingTop: 6,
-    backgroundColor: '#081122'
+  loadingCell: {
+    flex: 1
   },
-  footerText: {
-    color: '#64748b',
-    fontSize: 12,
-    textAlign: 'center'
+  loadingCaption: {
+    marginTop: spacing.xl,
+    textAlign: 'center',
+    color: palette.textMuted,
+    fontSize: 13
   }
 })

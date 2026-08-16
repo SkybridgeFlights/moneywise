@@ -1,21 +1,21 @@
 import React, { useMemo, useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { StyleSheet, Text, View } from 'react-native'
+import { FormScreen } from '../components/FormScreen'
 import { LabeledInput } from '../components/LabeledInput'
-import { NoticeCard } from '../components/NoticeCard'
 import { RecordCard } from '../components/RecordCard'
+import { Button, Card, SectionHeader, StateView } from '../components/ui'
 import type { IncomeRecord } from '../models/types'
 import { parseDecimalInput } from '../services/repository'
-import { formatMoneyDecimal, moneyDisplayNumber } from '../models/money'
+import { formatMoneyDecimal } from '../models/money'
+import { createMoneyFormatter } from '../theme/format'
+import { palette, spacing, statusPalette, typography } from '../theme/tokens'
 
 interface IncomeScreenProps {
   records: IncomeRecord[]
   currency: string
+  locale: string
   onSave: (input: Partial<IncomeRecord>) => void
   onDelete: (id: string) => void
-}
-
-function formatMoney(value: number, currency: string): string {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 2 }).format(moneyDisplayNumber(value))
 }
 
 const initialForm = {
@@ -26,15 +26,28 @@ const initialForm = {
   date: new Date().toISOString().slice(0, 10)
 }
 
-export function IncomeScreen({ records, currency, onSave, onDelete }: IncomeScreenProps): React.JSX.Element {
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+
+export function IncomeScreen({ records, currency, locale, onSave, onDelete }: IncomeScreenProps): React.JSX.Element {
   const [form, setForm] = useState(initialForm)
+  const [touched, setTouched] = useState(false)
+  const formatMoney = useMemo(() => createMoneyFormatter(currency, locale), [currency, locale])
   const total = useMemo(() => records.reduce((sum, record) => sum + record.amount, 0), [records])
+
+  // Validation is presentational only; parsing stays in parseDecimalInput.
+  const nameError = touched && !form.name.trim() ? 'Enter a name for this income.' : null
+  const amountError = touched && !Number.isFinite(parseDecimalInput(form.amount, Number.NaN)) ? 'Enter an amount such as 1200.50.' : null
+  const dateError = touched && !DATE_PATTERN.test(form.date) ? 'Use the format YYYY-MM-DD.' : null
+  const canSubmit = Boolean(form.name.trim()) && Number.isFinite(parseDecimalInput(form.amount, Number.NaN)) && DATE_PATTERN.test(form.date)
 
   function resetForm(): void {
     setForm(initialForm)
+    setTouched(false)
   }
 
   function handleSubmit(): void {
+    setTouched(true)
+    if (!canSubmit) return
     onSave({
       id: form.id,
       name: form.name,
@@ -49,104 +62,110 @@ export function IncomeScreen({ records, currency, onSave, onDelete }: IncomeScre
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.content}>
-      <View style={styles.formCard}>
-        <Text style={styles.heading}>{form.id ? 'Edit income' : 'Add income'}</Text>
-        <LabeledInput label="Name" value={form.name} onChangeText={(value) => setForm((current) => ({ ...current, name: value }))} placeholder="Salary" />
-        <LabeledInput label="Group" value={form.groupName} onChangeText={(value) => setForm((current) => ({ ...current, groupName: value }))} placeholder="Primary" />
-        <LabeledInput label="Amount" value={form.amount} onChangeText={(value) => setForm((current) => ({ ...current, amount: value }))} placeholder="1200.50" keyboardType="numeric" />
-        <LabeledInput label="Date" value={form.date} onChangeText={(value) => setForm((current) => ({ ...current, date: value }))} placeholder="YYYY-MM-DD" />
-        <View style={styles.formActions}>
-          <Pressable onPress={handleSubmit} style={[styles.actionButton, styles.primaryAction]}>
-            <Text style={styles.actionText}>{form.id ? 'Update' : 'Save'}</Text>
-          </Pressable>
-          <Pressable onPress={resetForm} style={[styles.actionButton, styles.secondaryAction]}>
-            <Text style={styles.actionText}>Clear</Text>
-          </Pressable>
-        </View>
-      </View>
-
-      <View style={styles.summary}>
+    <FormScreen>
+      <Card style={styles.summary}>
         <Text style={styles.summaryLabel}>Total income</Text>
-        <Text style={styles.summaryValue}>{formatMoney(total, currency)}</Text>
-      </View>
+        <Text style={styles.summaryValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+          {formatMoney(total)}
+        </Text>
+        <Text style={styles.summaryHint}>
+          {records.length} {records.length === 1 ? 'source' : 'sources'} recorded
+        </Text>
+      </Card>
 
-      {records.length === 0 ? <NoticeCard title="No income yet" description="Add your first income source to start tracking what is available this month." /> : null}
-
-      {records.map((record) => (
-        <RecordCard
-          key={record.id}
-          title={record.name}
-          subtitle={`${record.groupName} - ${record.date}`}
-          value={formatMoney(record.amount, currency)}
-          onEdit={() =>
-            setForm({
-              id: record.id,
-              name: record.name,
-              groupName: record.groupName,
-              amount: formatMoneyDecimal(record.amount),
-              date: record.date
-            })
-          }
-          onDelete={() => onDelete(record.id)}
+      <Card>
+        <SectionHeader title={form.id ? 'Edit income' : 'Add income'} subtitle="Amounts are stored to the exact cent." />
+        <LabeledInput
+          label="Name"
+          value={form.name}
+          onChangeText={(value) => setForm((current) => ({ ...current, name: value }))}
+          placeholder="Salary"
+          error={nameError}
         />
-      ))}
-    </ScrollView>
+        <LabeledInput
+          label="Group"
+          value={form.groupName}
+          onChangeText={(value) => setForm((current) => ({ ...current, groupName: value }))}
+          placeholder="Primary"
+          hint="Used to group related income together."
+        />
+        <LabeledInput
+          label="Amount"
+          value={form.amount}
+          onChangeText={(value) => setForm((current) => ({ ...current, amount: value }))}
+          placeholder="1200.50"
+          keyboardType="money"
+          error={amountError}
+        />
+        <LabeledInput
+          label="Date"
+          value={form.date}
+          onChangeText={(value) => setForm((current) => ({ ...current, date: value }))}
+          placeholder="YYYY-MM-DD"
+          error={dateError}
+          returnKeyType="done"
+          onSubmitEditing={handleSubmit}
+        />
+        <View style={styles.actions}>
+          <Button label={form.id ? 'Update' : 'Save'} onPress={handleSubmit} style={styles.actionGrow} />
+          <Button label="Clear" onPress={resetForm} variant="secondary" style={styles.actionGrow} />
+        </View>
+      </Card>
+
+      {records.length === 0 ? (
+        <StateView
+          kind="empty"
+          title="No income yet"
+          description="Add your first income source so MoneyWise can work out what is available this month."
+        />
+      ) : (
+        records.map((record) => (
+          <RecordCard
+            key={record.id}
+            title={record.name}
+            subtitle={`${record.groupName} · ${record.date}`}
+            value={formatMoney(record.amount)}
+            onEdit={() => {
+              setTouched(false)
+              setForm({
+                id: record.id,
+                name: record.name,
+                groupName: record.groupName,
+                amount: formatMoneyDecimal(record.amount),
+                date: record.date
+              })
+            }}
+            onDelete={() => onDelete(record.id)}
+          />
+        ))
+      )}
+    </FormScreen>
   )
 }
 
 const styles = StyleSheet.create({
-  content: {
-    paddingHorizontal: 16,
-    paddingBottom: 24,
-    gap: 14
-  },
-  formCard: {
-    borderRadius: 20,
-    backgroundColor: '#0f172a',
-    borderWidth: 1,
-    borderColor: '#1e293b',
-    padding: 16,
-    gap: 12
-  },
-  heading: {
-    color: '#f8fafc',
-    fontSize: 18,
-    fontWeight: '700'
-  },
-  formActions: {
-    flexDirection: 'row',
-    gap: 10
-  },
-  actionButton: {
-    flex: 1,
-    borderRadius: 14,
-    paddingVertical: 12,
-    alignItems: 'center'
-  },
-  primaryAction: {
-    backgroundColor: '#1d4ed8'
-  },
-  secondaryAction: {
-    backgroundColor: '#334155'
-  },
-  actionText: {
-    color: '#f8fafc',
-    fontWeight: '700'
-  },
   summary: {
-    borderRadius: 18,
-    backgroundColor: '#082f49',
-    padding: 16,
-    gap: 6
+    gap: spacing.xs,
+    backgroundColor: statusPalette.positive.bg,
+    borderColor: statusPalette.positive.border
   },
   summaryLabel: {
-    color: '#bae6fd',
-    fontSize: 13
+    ...typography.caption,
+    color: palette.textSecondary
   },
   summaryValue: {
-    color: '#f0f9ff',
-    fontSize: 24,
-    fontWeight: '700'
+    ...typography.display,
+    color: palette.textPrimary
+  },
+  summaryHint: {
+    ...typography.caption,
+    color: palette.textMuted
+  },
+  actions: {
+    flexDirection: 'row',
+    gap: spacing.sm
+  },
+  actionGrow: {
+    flex: 1
   }
 })

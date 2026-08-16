@@ -1,45 +1,90 @@
 import React from 'react'
-import { StyleSheet, Text, View } from 'react-native'
+import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { elevation, palette, radius, sizing, spacing, statusPalette, typography, type StatusTone } from '../theme/tokens'
 
 interface MetricCardProps {
   label: string
   value: string
-  accent?: string
+  /** Optional supporting line, e.g. what the figure is measured against. */
+  hint?: string
+  tone?: StatusTone
+  onPress?: () => void
 }
 
-export function MetricCard({ label, value, accent = '#38bdf8' }: MetricCardProps): React.JSX.Element {
+export function MetricCard({ label, value, hint, tone = 'brand', onPress }: MetricCardProps): React.JSX.Element {
+  const accent = statusPalette[tone].fg
+  const content = (
+    <>
+      <View style={[styles.accent, { backgroundColor: accent }]} />
+      <Text style={styles.label} numberOfLines={1}>
+        {label}
+      </Text>
+      <Text style={styles.value} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+        {value}
+      </Text>
+      {hint ? (
+        <Text style={styles.hint} numberOfLines={1}>
+          {hint}
+        </Text>
+      ) : null}
+    </>
+  )
+
+  if (!onPress) {
+    return (
+      <View accessible accessibilityRole="text" accessibilityLabel={`${label}: ${value}${hint ? `. ${hint}` : ''}`} style={styles.card}>
+        {content}
+      </View>
+    )
+  }
+
   return (
-    <View style={styles.card}>
-      <View style={[styles.dot, { backgroundColor: accent }]} />
-      <Text style={styles.label}>{label}</Text>
-      <Text style={styles.value}>{value}</Text>
-    </View>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${label}: ${value}${hint ? `. ${hint}` : ''}`}
+      accessibilityHint="Opens the related screen"
+      onPress={onPress}
+      style={({ pressed }) => [styles.card, pressed ? styles.pressed : null]}
+    >
+      {content}
+    </Pressable>
   )
 }
 
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    minWidth: 150,
-    borderRadius: 18,
-    backgroundColor: '#0f172a',
+    minWidth: 0,
+    minHeight: 96,
+    borderRadius: radius.lg,
+    backgroundColor: palette.surface,
     borderWidth: 1,
-    borderColor: '#1e293b',
-    padding: 14,
-    gap: 8
+    borderColor: palette.border,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    gap: spacing.xs,
+    justifyContent: 'center',
+    ...elevation.card
   },
-  dot: {
-    width: 10,
-    height: 10,
-    borderRadius: 999
+  pressed: {
+    opacity: 0.75
+  },
+  accent: {
+    width: sizing.iconSm + 6,
+    height: 3,
+    borderRadius: radius.pill,
+    marginBottom: spacing.xs
   },
   label: {
-    color: '#94a3b8',
-    fontSize: 13
+    ...typography.caption,
+    color: palette.textSecondary
   },
   value: {
-    color: '#f8fafc',
-    fontSize: 22,
-    fontWeight: '700'
+    ...typography.metric,
+    color: palette.textPrimary
+  },
+  hint: {
+    ...typography.caption,
+    color: palette.textMuted
   }
 })
