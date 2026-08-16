@@ -1,5 +1,20 @@
 import type { DashboardAnalytics, DebtRecord, ExpenseRecord, FinanceState, Goal } from './types'
-import { divideMoney, multiplyMoneyByBasisPoints } from './money'
+import { allocateMoney, divideMoney, multiplyMoneyByBasisPoints } from './money'
+
+const DAYS_PER_WEEK = 7
+
+/**
+ * Spreads an amount across the remaining weeks of the month.
+ *
+ * remainingWeeksInMonth is a fractional dashboard metric (16 days reads as 2.29
+ * weeks), so it can never be a money divisor. Dividing by days/7 is the same as
+ * scaling by 7/days, which allocateMoney evaluates exactly in minor units. A
+ * remainder shorter than a full week counts as one week, matching the clamped
+ * figure shown beside it on the dashboard.
+ */
+function spreadOverRemainingWeeks(amount: number, remainingDays: number): number {
+  return remainingDays >= DAYS_PER_WEEK ? allocateMoney(amount, DAYS_PER_WEEK, remainingDays) : amount
+}
 
 function monthId(date = new Date()): string {
   const year = date.getFullYear()
@@ -189,7 +204,7 @@ export function computeDashboardAnalytics(state: FinanceState): DashboardAnalyti
       plannedGoalContributionsThisMonth
   )
   const safeDailySpending = divideMoney(remainingUsableBalance, Math.max(remainingDaysInMonth, 1))
-  const safeWeeklySpending = divideMoney(remainingUsableBalance, Math.max(remainingWeeksInMonth, 1))
+  const safeWeeklySpending = spreadOverRemainingWeeks(remainingUsableBalance, remainingDaysInMonth)
   const averageDailySpend = divideMoney(spentToDate, elapsedDays)
 
   let plannerStatus: DashboardAnalytics['smartPlanner']['status'] = 'comfortable'
@@ -216,7 +231,7 @@ export function computeDashboardAnalytics(state: FinanceState): DashboardAnalyti
     remainingDaysInMonth,
     remainingWeeksInMonth,
     safeDailySpending: divideMoney(remainingBalance, remainingDaysInMonth),
-    safeWeeklySpending: divideMoney(remainingBalance, remainingWeeksInMonth),
+    safeWeeklySpending: spreadOverRemainingWeeks(remainingBalance, remainingDaysInMonth),
     smartPlanner: {
       currentRemainingBalance,
       remainingUsableBalance,

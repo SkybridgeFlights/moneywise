@@ -1,5 +1,5 @@
 import type { DebtRecord, ExpenseRecord, FinanceState, Goal, IncomeRecord } from './types'
-import { divideMoney, multiplyMoneyByBasisPoints } from './money'
+import { allocateMoney, divideMoney, multiplyMoneyByBasisPoints } from './money'
 
 export type PlannerPeriodFilter = 'today' | 'week' | 'month' | 'year' | 'previousMonth' | 'previousYear' | 'nextMonth' | 'nextYear'
 
@@ -403,7 +403,14 @@ export function buildBudgetPlanner(state: FinanceState, filter: PlannerPeriodFil
       .reduce((sum, entry) => sum + entry.amount, 0)
   )
   const allowedMonthlySpending = round2(balanceAfterCommitments - variableSpentToDate)
-  const allowedWeeklySpending = remainingWeeksInPeriod > 0 ? divideMoney(allowedMonthlySpending, remainingWeeksInPeriod) : 0
+  // remainingWeeksInPeriod is a fractional display metric, so the weekly figure
+  // is scaled by the exact ratio 7/days rather than divided by it.
+  const allowedWeeklySpending =
+    remainingDaysInPeriod >= 7
+      ? allocateMoney(allowedMonthlySpending, 7, remainingDaysInPeriod)
+      : remainingDaysInPeriod > 0
+        ? allowedMonthlySpending
+        : 0
   const allowedDailySpending = remainingDaysInPeriod > 0 ? divideMoney(allowedMonthlySpending, remainingDaysInPeriod) : 0
 
   const totalGoalContributed = new Map<string, number>()

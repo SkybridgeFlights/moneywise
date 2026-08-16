@@ -29,6 +29,26 @@ export function divideMoney(value: number, divisor: number): number {
   return Number(amount < 0n ? -rounded : rounded)
 }
 
+/**
+ * Scales money by the exact ratio numerator/denominator in one step.
+ *
+ * Dividing by a non-integer period (for example "16/7 weeks") cannot go through
+ * divideMoney, which only accepts an integer divisor. Expressing the same
+ * quantity as an exact ratio keeps the arithmetic in integer minor units and
+ * applies the identical half-up rounding, so it stays byte-compatible with the
+ * desktop allocateMoney used by the shared finance engine.
+ */
+export function allocateMoney(value: number, numerator: number, denominator: number): number {
+  if (!Number.isSafeInteger(value) || !Number.isSafeInteger(numerator) || !Number.isSafeInteger(denominator) || denominator <= 0) {
+    throw new Error('Invalid money allocation.')
+  }
+  const product = BigInt(value) * BigInt(numerator)
+  const divisor = BigInt(denominator)
+  const absolute = product < 0n ? -product : product
+  const rounded = (absolute + divisor / 2n) / divisor
+  return Number(product < 0n ? -rounded : rounded)
+}
+
 export function multiplyMoneyByBasisPoints(value: number, basisPoints: number): number {
   if (!Number.isSafeInteger(value) || !Number.isSafeInteger(basisPoints)) throw new Error('Invalid money rate.')
   const product = BigInt(value) * BigInt(basisPoints)
